@@ -1,10 +1,12 @@
+
 import os
 import logging
-from datetime import datetime, time
+from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from geopy.distance import geodesic
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 
 # Настройка логирования
@@ -14,128 +16,69 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Конфигурация (замените на свои значения)
-BOT_TOKEN = "8567193777:AAFhpxhnQjVhWOjAhHdw0_liDdjbnAncr9s"  # Получите токен у @BotFather
-CAMPUS_LATITUDE = 43.239581  # Координаты кампуса (пример: Алматы)
-CAMPUS_LONGITUDE = 76.962465
-PROXIMITY_RADIUS = 500  # метров
-
-# База данных
-DB_NAME = "campus_bot.db"
-
+# Конфигурация из переменных окружения
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
+CAMPUS_LATITUDE = float(os.getenv("CAMPUS_LATITUDE", "43.2220"))
+CAMPUS_LONGITUDE = float(os.getenv("CAMPUS_LONGITUDE", "76.8512"))
+PROXIMITY_RADIUS = int(os.getenv("PROXIMITY_RADIUS", "500"))
 
 @contextmanager
 def get_db():
-    """Контекстный менеджер для работы с БД"""
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
+    """Контекстный менеджер для работы с PostgreSQL"""
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     try:
         yield conn
     finally:
         conn.close()
 
-
 def init_db():
-    """Инициализация базы данных"""
+    """Инициализация базы данных PostgreSQL"""
     with get_db() as conn:
         cursor = conn.cursor()
-
+        
         # Таблица пользователей
         cursor.execute('''
-                       CREATE TABLE IF NOT EXISTS users
-                       (
-                           user_id
-                           INTEGER
-                           PRIMARY
-                           KEY,
-                           username
-                           TEXT,
-                           full_name
-                           TEXT,
-                           group_department
-                           TEXT,
-                           geo_consent
-                           BOOLEAN
-                           DEFAULT
-                           0,
-                           registration_date
-                           TIMESTAMP
-                           DEFAULT
-                           CURRENT_TIMESTAMP,
-                           last_update
-                           TIMESTAMP
-                           DEFAULT
-                           CURRENT_TIMESTAMP
-                       )
-                       ''')
-
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT,
+                full_name TEXT,
+                group_department TEXT,
+                geo_consent BOOLEAN DEFAULT FALSE,
+                registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
         # Таблица присутствия
         cursor.execute('''
-                       CREATE TABLE IF NOT EXISTS presence
-                       (
-                           id
-                           INTEGER
-                           PRIMARY
-                           KEY
-                           AUTOINCREMENT,
-                           user_id
-                           INTEGER,
-                           check_in_time
-                           TIMESTAMP,
-                           check_out_time
-                           TIMESTAMP,
-                           date
-                           DATE,
-                           status
-                           TEXT,
-                           FOREIGN
-                           KEY
-                       (
-                           user_id
-                       ) REFERENCES users
-                       (
-                           user_id
-                       )
-                           )
-                       ''')
-
+            CREATE TABLE IF NOT EXISTS presence (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                check_in_time TIMESTAMP,
+                check_out_time TIMESTAMP,
+                date DATE,
+                status TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        ''')
+        
         # Таблица геолокации
         cursor.execute('''
-                       CREATE TABLE IF NOT EXISTS geolocation
-                       (
-                           id
-                           INTEGER
-                           PRIMARY
-                           KEY
-                           AUTOINCREMENT,
-                           user_id
-                           INTEGER,
-                           latitude
-                           REAL,
-                           longitude
-                           REAL,
-                           distance_to_campus
-                           REAL,
-                           timestamp
-                           TIMESTAMP
-                           DEFAULT
-                           CURRENT_TIMESTAMP,
-                           is_near_campus
-                           BOOLEAN,
-                           FOREIGN
-                           KEY
-                       (
-                           user_id
-                       ) REFERENCES users
-                       (
-                           user_id
-                       )
-                           )
-                       ''')
-
+            CREATE TABLE IF NOT EXISTS geolocation (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                latitude REAL,
+                longitude REAL,
+                distance_to_campus REAL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_near_campus BOOLEAN,
+                FOREIGN KEY (user_id) REFERENCES users(user_id)
+            )
+        ''')
+        
         conn.commit()
-        logger.info("База данных инициализирована")
-
+        logger.info("База данных PostgreSQL инициализирована")
 
 def get_main_keyboard():
     """Главная клавиатура"""
@@ -147,23 +90,22 @@ def get_main_keyboard():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start"""
     user = update.effective_user
     user_id = user.id
     username = user.username or "Без username"
     full_name = user.full_name or "Не указано"
-
+    
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
-                       INSERT
-                       OR IGNORE INTO users (user_id, username, full_name)
-            VALUES (?, ?, ?)
-                       ''', (user_id, username, full_name))
+            INSERT INTO users (user_id, username, full_name)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id) DO NOTHING
+        ''', (user_id, username, full_name))
         conn.commit()
-
+    
     welcome_text = f"""
 👋 Привет, {full_name}!
 
@@ -174,270 +116,291 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🔹 Основные функции:
 • Отметка прихода/ухода из кампуса
 • Просмотр списка присутствующих
-• Отслеживание близости к кампусу (с вашего согласия)
+• Отслеживание близости к кампусу (опционально)
+
+⚠️ Важно: Геолокация работает через:
+📱 Мобильное приложение Telegram
+🌐 Веб-версию web.telegram.org
+❌ Desktop версия НЕ поддерживает отправку геолокации
 
 Используйте кнопки меню для работы с ботом.
     """
-
+    
     await update.message.reply_text(welcome_text, reply_markup=get_main_keyboard())
-
 
 async def check_in(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка прихода в кампус"""
     user_id = update.effective_user.id
     now = datetime.now()
     today = now.date()
-
+    
     with get_db() as conn:
         cursor = conn.cursor()
-
+        
         # Проверяем, не отмечен ли уже пользователь
         cursor.execute('''
-                       SELECT *
-                       FROM presence
-                       WHERE user_id = ? AND date = ? AND status = 'in_campus'
-                       ''', (user_id, today))
-
+            SELECT * FROM presence 
+            WHERE user_id = %s AND date = %s AND status = 'in_campus'
+        ''', (user_id, today))
+        
         if cursor.fetchone():
             await update.message.reply_text(
                 "✅ Вы уже отмечены как находящийся в кампусе!",
                 reply_markup=get_main_keyboard()
             )
             return
-
+        
         # Отмечаем приход
         cursor.execute('''
-                       INSERT INTO presence (user_id, check_in_time, date, status)
-                       VALUES (?, ?, ?, 'in_campus')
-                       ''', (user_id, now, today))
+            INSERT INTO presence (user_id, check_in_time, date, status)
+            VALUES (%s, %s, %s, 'in_campus')
+        ''', (user_id, now, today))
         conn.commit()
-
+    
     await update.message.reply_text(
         f"✅ Вы отмечены в кампусе!\n🕐 Время: {now.strftime('%H:%M')}",
         reply_markup=get_main_keyboard()
     )
-
 
 async def check_out(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка ухода из кампуса"""
     user_id = update.effective_user.id
     now = datetime.now()
     today = now.date()
-
+    
     with get_db() as conn:
         cursor = conn.cursor()
-
+        
         # Находим активную отметку
         cursor.execute('''
-                       SELECT id
-                       FROM presence
-                       WHERE user_id = ? AND date = ? AND status = 'in_campus'
-                       ORDER BY check_in_time DESC LIMIT 1
-                       ''', (user_id, today))
-
+            SELECT id FROM presence 
+            WHERE user_id = %s AND date = %s AND status = 'in_campus'
+            ORDER BY check_in_time DESC LIMIT 1
+        ''', (user_id, today))
+        
         record = cursor.fetchone()
-
+        
         if not record:
             await update.message.reply_text(
                 "❌ Вы не отмечены в кампусе!",
                 reply_markup=get_main_keyboard()
             )
             return
-
+        
         # Обновляем отметку
         cursor.execute('''
-                       UPDATE presence
-                       SET check_out_time = ?,
-                           status         = 'left'
-                       WHERE id = ?
-                       ''', (now, record[0]))
+            UPDATE presence 
+            SET check_out_time = %s, status = 'left'
+            WHERE id = %s
+        ''', (now, record['id']))
         conn.commit()
-
+    
     await update.message.reply_text(
         f"👋 Вы отметились как ушедший!\n🕐 Время: {now.strftime('%H:%M')}",
         reply_markup=get_main_keyboard()
     )
 
-
 async def who_inside(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать список присутствующих"""
     today = datetime.now().date()
-
+    
     with get_db() as conn:
         cursor = conn.cursor()
-
+        
         # Получаем всех присутствующих
         cursor.execute('''
-                       SELECT u.username, u.full_name, p.check_in_time, g.is_near_campus, g.distance_to_campus
-                       FROM presence p
-                                JOIN users u ON p.user_id = u.user_id
-                                LEFT JOIN (SELECT user_id, is_near_campus, distance_to_campus
-                                           FROM geolocation
-                                           WHERE id IN (SELECT MAX(id)
-                                                        FROM geolocation
-                                                        GROUP BY user_id)) g ON u.user_id = g.user_id
-                       WHERE p.date = ?
-                         AND p.status = 'in_campus'
-                       ORDER BY p.check_in_time
-                       ''', (today,))
-
+            SELECT u.username, u.full_name, u.group_department, p.check_in_time, g.is_near_campus, g.distance_to_campus
+            FROM presence p
+            JOIN users u ON p.user_id = u.user_id
+            LEFT JOIN (
+                SELECT DISTINCT ON (user_id) user_id, is_near_campus, distance_to_campus
+                FROM geolocation
+                ORDER BY user_id, timestamp DESC
+            ) g ON u.user_id = g.user_id
+            WHERE p.date = %s AND p.status = 'in_campus'
+            ORDER BY p.check_in_time
+        ''', (today,))
+        
         people = cursor.fetchall()
-
+    
     if not people:
         await update.message.reply_text(
             "😔 Сейчас никого нет в кампусе.",
             reply_markup=get_main_keyboard()
         )
         return
-
+    
     # Формируем список
     text = f"👥 В кампусе сейчас: {len(people)} чел.\n\n"
-
+    
     for person in people:
-        username, full_name, check_in, is_near, distance = person
-        check_in_time = datetime.fromisoformat(check_in).strftime('%H:%M')
-
+        username = person['username']
+        full_name = person['full_name']
+        group = person['group_department']
+        check_in = person['check_in_time']
+        is_near = person['is_near_campus']
+        distance = person['distance_to_campus']
+        
+        check_in_time = check_in.strftime('%H:%M')
+        
         status_icon = "🟢"
         status_text = ""
-
+        
         if is_near is not None:
             if is_near:
                 status_icon = "🟡"
                 status_text = f" - Рядом ({int(distance)}м)"
-
-        text += f"{status_icon} @{username} ({full_name}){status_text}\n"
+        
+        group_text = f" ({group})" if group else ""
+        
+        text += f"{status_icon} @{username} - {full_name}{group_text}{status_text}\n"
         text += f"   └ С {check_in_time}\n\n"
-
+    
     await update.message.reply_text(text, reply_markup=get_main_keyboard())
-
 
 async def my_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать мой статус"""
     user_id = update.effective_user.id
     today = datetime.now().date()
-
+    
     with get_db() as conn:
         cursor = conn.cursor()
-
+        
         # Проверяем статус присутствия
         cursor.execute('''
-                       SELECT check_in_time, check_out_time, status
-                       FROM presence
-                       WHERE user_id = ? AND date = ?
-                       ORDER BY check_in_time DESC LIMIT 1
-                       ''', (user_id, today))
-
+            SELECT check_in_time, check_out_time, status
+            FROM presence
+            WHERE user_id = %s AND date = %s
+            ORDER BY check_in_time DESC LIMIT 1
+        ''', (user_id, today))
+        
         presence = cursor.fetchone()
-
+        
         # Получаем геолокацию
         cursor.execute('''
-                       SELECT latitude, longitude, distance_to_campus, is_near_campus, timestamp
-                       FROM geolocation
-                       WHERE user_id = ?
-                       ORDER BY timestamp DESC LIMIT 1
-                       ''', (user_id,))
-
+            SELECT latitude, longitude, distance_to_campus, is_near_campus, timestamp
+            FROM geolocation
+            WHERE user_id = %s
+            ORDER BY timestamp DESC LIMIT 1
+        ''', (user_id,))
+        
         geo = cursor.fetchone()
-
+        
         # Проверяем согласие на геоданные
-        cursor.execute('SELECT geo_consent FROM users WHERE user_id = ?', (user_id,))
-        geo_consent = cursor.fetchone()[0]
-
+        cursor.execute('SELECT geo_consent FROM users WHERE user_id = %s', (user_id,))
+        result = cursor.fetchone()
+        geo_consent = result['geo_consent'] if result else False
+    
     text = "📊 Ваш статус:\n\n"
-
+    
     if presence:
-        status = presence[2]
+        status = presence['status']
         if status == 'in_campus':
-            check_in = datetime.fromisoformat(presence[0]).strftime('%H:%M')
+            check_in = presence['check_in_time'].strftime('%H:%M')
             text += f"🟢 Статус: В кампусе\n"
             text += f"🕐 Пришли в: {check_in}\n"
         else:
             text += f"⚪ Статус: Вне кампуса\n"
     else:
         text += f"⚪ Статус: Сегодня не отмечались\n"
-
+    
     text += f"\n📍 Геолокация: {'✅ Включена' if geo_consent else '❌ Отключена'}\n"
-
+    
     if geo and geo_consent:
-        distance = int(geo[2])
-        is_near = geo[3]
-        last_update = datetime.fromisoformat(geo[4]).strftime('%H:%M')
-
+        distance = int(geo['distance_to_campus'])
+        is_near = geo['is_near_campus']
+        last_update = geo['timestamp'].strftime('%H:%M')
+        
         if is_near:
             text += f"🟡 Вы рядом с кампусом ({distance}м)\n"
         else:
             text += f"📍 Расстояние до кампуса: {distance}м\n"
-
+        
         text += f"🕐 Последнее обновление: {last_update}\n"
-
+    
     await update.message.reply_text(text, reply_markup=get_main_keyboard())
-
 
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Настройки пользователя"""
     user_id = update.effective_user.id
-
+    
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT geo_consent FROM users WHERE user_id = ?', (user_id,))
-        geo_consent = cursor.fetchone()[0]
-
+        cursor.execute('SELECT geo_consent, full_name, group_department FROM users WHERE user_id = %s', (user_id,))
+        user_data = cursor.fetchone()
+        geo_consent = user_data['geo_consent']
+        full_name = user_data['full_name']
+        group_department = user_data['group_department'] or "Не указано"
+    
     keyboard = [
         [InlineKeyboardButton(
-            f"📍 Геолокация: {'✅ Вкл' if geo_consent else '❌ Выкл'}",
+            f"📍 Геолокация: {'✅ Вкл' if geo_consent else '❌ Выкл'}", 
             callback_data='toggle_geo'
         )],
+        [InlineKeyboardButton("✏️ Изменить имя", callback_data='edit_name')],
+        [InlineKeyboardButton("🏢 Изменить группу/отдел", callback_data='edit_group')],
         [InlineKeyboardButton("ℹ️ О геолокации", callback_data='geo_info')]
     ]
-
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    text = """
+    
+    text = f"""
 ⚙️ Настройки
 
-Управляйте вашими данными и разрешениями.
+👤 Имя: {full_name}
+🏢 Группа/Отдел: {group_department}
+📍 Геолокация: {'✅ Включена' if geo_consent else '❌ Отключена'}
 
-📍 Геолокация:
-Позволяет боту отслеживать ваше расстояние до кампуса и показывать статус "Рядом с кампусом" другим пользователям.
+📱 Для отправки геолокации используйте:
+• Мобильное приложение Telegram
+• Веб-версию (web.telegram.org)
+• Telegram Desktop не поддерживает отправку геолокации
+
+Геолокация опциональна - бот работает и без неё!
     """
-
+    
     await update.message.reply_text(text, reply_markup=reply_markup)
-
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик нажатий на inline кнопки"""
     query = update.callback_query
     await query.answer()
-
+    
     user_id = query.from_user.id
-
+    
     if query.data == 'toggle_geo':
         with get_db() as conn:
             cursor = conn.cursor()
-            cursor.execute('SELECT geo_consent FROM users WHERE user_id = ?', (user_id,))
-            current = cursor.fetchone()[0]
+            cursor.execute('SELECT geo_consent FROM users WHERE user_id = %s', (user_id,))
+            current = cursor.fetchone()['geo_consent']
             new_value = not current
-
-            cursor.execute('UPDATE users SET geo_consent = ? WHERE user_id = ?', (new_value, user_id))
+            
+            cursor.execute('UPDATE users SET geo_consent = %s WHERE user_id = %s', (new_value, user_id))
             conn.commit()
-
+        
         status_text = "включена ✅" if new_value else "отключена ❌"
-
+        
         keyboard = [
             [InlineKeyboardButton(
-                f"📍 Геолокация: {'✅ Вкл' if new_value else '❌ Выкл'}",
+                f"📍 Геолокация: {'✅ Вкл' if new_value else '❌ Выкл'}", 
                 callback_data='toggle_geo'
             )],
+            [InlineKeyboardButton("✏️ Изменить имя", callback_data='edit_name')],
+            [InlineKeyboardButton("🏢 Изменить группу/отдел", callback_data='edit_group')],
             [InlineKeyboardButton("ℹ️ О геолокации", callback_data='geo_info')]
         ]
-
+        
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(keyboard))
+        
+        extra_msg = ""
+        if new_value:
+            extra_msg = "\n\n📱 Отправьте геолокацию через:\n• Мобильное приложение Telegram\n• Веб-версию web.telegram.org\n(Desktop не поддерживает геолокацию)"
+        
         await query.message.reply_text(
-            f"📍 Геолокация {status_text}\n\n" +
-            ("Теперь отправьте вашу геолокацию через кнопку в меню." if new_value else ""),
+            f"📍 Геолокация {status_text}{extra_msg}",
             reply_markup=get_main_keyboard()
         )
-
+    
     elif query.data == 'geo_info':
         info_text = """
 ℹ️ О функции геолокации
@@ -449,49 +412,69 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 • Другие пользователи видят, что вы близко к кампусу
 • Ваши точные координаты НЕ показываются другим
 
+📱 Для отправки геолокации:
+• Откройте Telegram на смартфоне
+• Или используйте web.telegram.org в браузере
+• Desktop версия НЕ поддерживает отправку геолокации
+
+⚠️ Геолокация опциональна - основные функции бота работают без неё!
+
 Вы можете отключить эту функцию в любой момент.
         """
         await query.message.reply_text(info_text)
-
+    
+    elif query.data == 'edit_name':
+        await query.message.reply_text(
+            "✏️ Отправьте ваше новое имя:",
+            reply_markup=get_main_keyboard()
+        )
+        context.user_data['editing'] = 'name'
+    
+    elif query.data == 'edit_group':
+        await query.message.reply_text(
+            "🏢 Отправьте вашу группу или отдел:",
+            reply_markup=get_main_keyboard()
+        )
+        context.user_data['editing'] = 'group'
 
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка полученной геолокации"""
     user_id = update.effective_user.id
     location = update.message.location
-
+    
     # Проверяем согласие
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT geo_consent FROM users WHERE user_id = ?', (user_id,))
-        geo_consent = cursor.fetchone()[0]
-
+        cursor.execute('SELECT geo_consent FROM users WHERE user_id = %s', (user_id,))
+        result = cursor.fetchone()
+        geo_consent = result['geo_consent'] if result else False
+        
         if not geo_consent:
             await update.message.reply_text(
                 "❌ Сначала включите геолокацию в настройках!",
                 reply_markup=get_main_keyboard()
             )
             return
-
+        
         # Рассчитываем расстояние
         user_coords = (location.latitude, location.longitude)
         campus_coords = (CAMPUS_LATITUDE, CAMPUS_LONGITUDE)
         distance = geodesic(user_coords, campus_coords).meters
         is_near = distance <= PROXIMITY_RADIUS
-
+        
         # Сохраняем в БД
         cursor.execute('''
-                       INSERT INTO geolocation (user_id, latitude, longitude, distance_to_campus, is_near_campus)
-                       VALUES (?, ?, ?, ?, ?)
-                       ''', (user_id, location.latitude, location.longitude, distance, is_near))
+            INSERT INTO geolocation (user_id, latitude, longitude, distance_to_campus, is_near_campus)
+            VALUES (%s, %s, %s, %s, %s)
+        ''', (user_id, location.latitude, location.longitude, distance, is_near))
         conn.commit()
-
+    
     status_text = f"🟡 Вы рядом с кампусом! ({int(distance)}м)" if is_near else f"📍 Расстояние до кампуса: {int(distance)}м"
-
+    
     await update.message.reply_text(
         f"✅ Геолокация обновлена!\n{status_text}",
         reply_markup=get_main_keyboard()
     )
-
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Справка по командам"""
@@ -516,14 +499,40 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 💡 Совет: Включите геолокацию в настройках, чтобы другие видели, когда вы рядом с кампусом!
     """
-
+    
     await update.message.reply_text(help_text, reply_markup=get_main_keyboard())
-
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка текстовых кнопок"""
     text = update.message.text
-
+    user_id = update.effective_user.id
+    
+    # Проверяем, идет ли редактирование профиля
+    if context.user_data.get('editing'):
+        editing = context.user_data['editing']
+        
+        with get_db() as conn:
+            cursor = conn.cursor()
+            
+            if editing == 'name':
+                cursor.execute('UPDATE users SET full_name = %s WHERE user_id = %s', (text, user_id))
+                conn.commit()
+                await update.message.reply_text(
+                    f"✅ Имя обновлено: {text}",
+                    reply_markup=get_main_keyboard()
+                )
+            elif editing == 'group':
+                cursor.execute('UPDATE users SET group_department = %s WHERE user_id = %s', (text, user_id))
+                conn.commit()
+                await update.message.reply_text(
+                    f"✅ Группа/отдел обновлена: {text}",
+                    reply_markup=get_main_keyboard()
+                )
+        
+        context.user_data['editing'] = None
+        return
+    
+    # Обработка кнопок меню
     if text == "📍 Я в кампусе":
         await check_in(update, context)
     elif text == "🚪 Я ухожу":
@@ -537,15 +546,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "❓ Помощь":
         await help_command(update, context)
 
-
 def main():
     """Запуск бота"""
+    # Проверяем наличие токена
+    if not BOT_TOKEN:
+        logger.error("BOT_TOKEN не установлен!")
+        return
+    
+    if not DATABASE_URL:
+        logger.error("DATABASE_URL не установлен!")
+        return
+    
     # Инициализация БД
-    init_db()
-
+    try:
+        init_db()
+    except Exception as e:
+        logger.error(f"Ошибка инициализации БД: {e}")
+        return
+    
     # Создаем приложение
     application = Application.builder().token(BOT_TOKEN).build()
-
+    
     # Регистрируем обработчики команд
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("checkin", check_in))
@@ -554,18 +575,17 @@ def main():
     application.add_handler(CommandHandler("mystatus", my_status))
     application.add_handler(CommandHandler("settings", settings))
     application.add_handler(CommandHandler("help", help_command))
-
+    
     # Обработчики сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_handler(MessageHandler(filters.LOCATION, handle_location))
-
+    
     # Обработчик callback
     application.add_handler(CallbackQueryHandler(button_callback))
-
+    
     # Запускаем бота
-    logger.info("Бот запущен!")
+    logger.info("Бот запущен на Render.com!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
-
 
 if __name__ == '__main__':
     main()
