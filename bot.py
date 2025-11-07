@@ -4,7 +4,7 @@
 
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 from geopy.distance import geodesic
@@ -43,6 +43,14 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 CAMPUS_LATITUDE = float(os.getenv("CAMPUS_LATITUDE", "43.2220"))
 CAMPUS_LONGITUDE = float(os.getenv("CAMPUS_LONGITUDE", "76.8512"))
 PROXIMITY_RADIUS = int(os.getenv("PROXIMITY_RADIUS", "500"))
+
+# Часовой пояс (UTC+5 для Алматы, UTC+6 для Астаны)
+TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", "5"))  # Алматы UTC+5
+TIMEZONE = timezone(timedelta(hours=TIMEZONE_OFFSET))
+
+def get_local_time():
+    """Получить текущее локальное время с учётом часового пояса"""
+    return datetime.now(TIMEZONE)
 
 @contextmanager
 def get_db():
@@ -152,7 +160,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_in(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка прихода в кампус"""
     user_id = update.effective_user.id
-    now = datetime.now()
+    now = get_local_time()
     today = now.date()
     
     with get_db() as conn:
@@ -186,7 +194,7 @@ async def check_in(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_out(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка ухода из кампуса"""
     user_id = update.effective_user.id
-    now = datetime.now()
+    now = get_local_time()
     today = now.date()
     
     with get_db() as conn:
@@ -223,7 +231,7 @@ async def check_out(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def who_inside(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать список присутствующих"""
-    today = datetime.now().date()
+    today = get_local_time().date()
     
     with get_db() as conn:
         cursor = conn.cursor()
@@ -262,7 +270,11 @@ async def who_inside(update: Update, context: ContextTypes.DEFAULT_TYPE):
         is_near = person['is_near_campus']
         distance = person['distance_to_campus']
         
-        check_in_time = check_in.strftime('%H:%M')
+        # Конвертируем время в локальный часовой пояс
+        if check_in.tzinfo is None:
+            check_in = check_in.replace(tzinfo=timezone.utc)
+        local_check_in = check_in.astimezone(TIMEZONE)
+        check_in_time = local_check_in.strftime('%H:%M')
         
         status_icon = "🟢"
         status_text = ""
@@ -282,7 +294,7 @@ async def who_inside(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def my_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать мой статус"""
     user_id = update.effective_user.id
-    today = datetime.now().date()
+    today = get_local_time().date()
     
     with get_db() as conn:
         cursor = conn.cursor()
@@ -317,9 +329,14 @@ async def my_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if presence:
         status = presence['status']
         if status == 'in_campus':
-            check_in = presence['check_in_time'].strftime('%H:%M')
+            check_in = presence['check_in_time']
+            # Конвертируем время в локальный часовой пояс
+            if check_in.tzinfo is None:
+                check_in = check_in.replace(tzinfo=timezone.utc)
+            local_check_in = check_in.astimezone(TIMEZONE)
+            check_in_str = local_check_in.strftime('%H:%M')
             text += f"🟢 Статус: В кампусе\n"
-            text += f"🕐 Пришли в: {check_in}\n"
+            text += f"🕐 Пришли в: {check_in_str}\n"
         else:
             text += f"⚪ Статус: Вне кампуса\n"
     else:
@@ -330,14 +347,20 @@ async def my_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if geo and geo_consent:
         distance = int(geo['distance_to_campus'])
         is_near = geo['is_near_campus']
-        last_update = geo['timestamp'].strftime('%H:%M')
+        last_update = geo['timestamp']
+        
+        # Конвертируем время в локальный часовой пояс
+        if last_update.tzinfo is None:
+            last_update = last_update.replace(tzinfo=timezone.utc)
+        local_update = last_update.astimezone(TIMEZONE)
+        last_update_str = local_update.strftime('%H:%M')
         
         if is_near:
             text += f"🟡 Вы рядом с кампусом ({distance}м)\n"
         else:
             text += f"📍 Расстояние до кампуса: {distance}м\n"
         
-        text += f"🕐 Последнее обновление: {last_update}\n"
+        text += f"🕐 Последнее обновление: {last_update_str}\n"
     
     await update.message.reply_text(text, reply_markup=get_main_keyboard())
 
@@ -585,6 +608,11 @@ def main():
         logger.error(f"Ошибка инициализации БД: {e}")
         return
     
+    # Запускаем Flask в отдельном потоке (для Render)
+    flask_thread = Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    logger.info("Flask веб-сервер запущен для Render")
+    
     # Создаем приложение
     application = Application.builder().token(BOT_TOKEN).build()
     
@@ -620,6 +648,7 @@ if __name__ == '__main__':
 python-telegram-bot==20.7
 geopy==2.4.1
 psycopg2-binary==2.9.10
+Flask==3.0.0
 """
 
 
