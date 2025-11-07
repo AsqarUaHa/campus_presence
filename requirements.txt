@@ -2,3 +2,5 @@ python-telegram-bot==20.7
 geopy==2.4.1
 psycopg2-binary==2.9.10
 Flask==3.0.0
+openpyxl==3.1.2
+python-dateutil==2.8.2
