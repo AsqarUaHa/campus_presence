@@ -1,3 +1,6 @@
+# ============================================
+# FILE 1: bot.py (основной файл бота)
+# ============================================
 
 import os
 import logging
@@ -8,6 +11,8 @@ from geopy.distance import geodesic
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
+from threading import Thread
+from flask import Flask
 
 # Настройка логирования
 logging.basicConfig(
@@ -15,6 +20,22 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Flask веб-сервер для Render (чтобы видел открытый порт)
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Campus Presence Bot is running! ✅"
+
+@app.route('/health')
+def health():
+    return {"status": "ok", "bot": "running"}
+
+def run_flask():
+    """Запуск Flask в отдельном потоке"""
+    port = int(os.getenv("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
 # Конфигурация из переменных окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -589,3 +610,55 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# ============================================
+# FILE 2: requirements.txt
+# ============================================
+
+"""
+python-telegram-bot==20.7
+geopy==2.4.1
+psycopg2-binary==2.9.10
+"""
+
+
+# ============================================
+# FILE 3: runtime.txt (ВАЖНО для Python 3.13)
+# ============================================
+
+"""
+python-3.11.9
+"""
+
+
+# ============================================
+# FILE 3: render.yaml (опционально)
+# ============================================
+
+"""
+services:
+  - type: web
+    name: campus-presence-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: campus-bot-db
+          property: connectionString
+      - key: CAMPUS_LATITUDE
+        value: "43.2220"
+      - key: CAMPUS_LONGITUDE
+        value: "76.8512"
+      - key: PROXIMITY_RADIUS
+        value: "500"
+
+databases:
+  - name: campus-bot-db
+    databaseName: campus_bot
+    user: campus_bot_user
+"""
