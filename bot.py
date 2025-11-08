@@ -392,10 +392,20 @@ def main():
     flask_thread.start()
     logger.info("✅ Flask запущен для Render")
     
-    # Telegram Application
-    application = Application.builder().token(BOT_TOKEN).build()
+    # Telegram Application (with job queue enabled)
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
     
-    application.job_queue.run_repeating(check_scheduled_posts, interval=60, first=10)
+    # Job queue для автопостов
+    if application.job_queue:
+        # Проверка постов каждую минуту
+        application.job_queue.run_repeating(check_scheduled_posts, interval=60, first=10)
+        logger.info("✅ Планировщик автопостов запущен")
+    else:
+        logger.warning("⚠️ Job queue недоступен")
     logger.info("✅ Планировщик автопостов запущен")
     
     # ConversationHandler для регистрации
