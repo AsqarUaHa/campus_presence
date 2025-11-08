@@ -8,7 +8,6 @@ from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-from requirements import BOT_TOKEN, TIMEZONE_OFFSET, ADMIN_IDS
 from database.models import init_database, is_user_registered, create_user, is_user_admin
 from handlers.registration import get_registration_handler
 from handlers.checkin import request_checkin_location, checkout, handle_checkin_location
