@@ -31,6 +31,11 @@ def init_database():
                 last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        # Обновление существующей схемы: гарантируем наличие столбца is_admin
+        cursor.execute('''
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE
+        ''')
         
         # Таблица мероприятий (новая)
         cursor.execute('''
