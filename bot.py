@@ -392,20 +392,18 @@ def main():
     flask_thread.start()
     logger.info("✅ Flask запущен для Render")
     
-    # Telegram Application (with job queue enabled)
-    application = (
-        Application.builder()
-        .token(BOT_TOKEN)
-        .build()
-    )
+    # Telegram Application
+    application = Application.builder().token(BOT_TOKEN).build()
     
     # Job queue для автопостов
-    if application.job_queue:
+    job_queue = application.job_queue
+    
+    if job_queue:
         # Проверка постов каждую минуту
-        application.job_queue.run_repeating(check_scheduled_posts, interval=60, first=10)
+        job_queue.run_repeating(check_scheduled_posts, interval=60, first=10)
         logger.info("✅ Планировщик автопостов запущен")
     else:
-        logger.warning("⚠️ Job queue недоступен")
+        logger.warning("⚠️ Job queue недоступен. Установите: pip install 'python-telegram-bot[job-queue]'")
     
     # ConversationHandler для регистрации
     registration_handler = get_registration_handler()
