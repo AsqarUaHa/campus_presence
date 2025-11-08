@@ -395,11 +395,7 @@ def main():
     # Telegram Application
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Job queue для автопостов
-    job_queue = application.job_queue
-    
-    # Проверка постов каждую минуту
-    job_queue.run_repeating(check_scheduled_posts, interval=60, first=10)
+    application.job_queue.run_repeating(check_scheduled_posts, interval=60, first=10)
     logger.info("✅ Планировщик автопостов запущен")
     
     # ConversationHandler для регистрации
