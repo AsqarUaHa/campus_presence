@@ -185,4 +185,3 @@ async def export_presence_data(update, context, period='today', event_id=None):
         caption=f"📊 Экспорт данных: {period_name}\n"
                 f"Всего записей: {len(data)}"
     )
-
