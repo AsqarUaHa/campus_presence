@@ -406,7 +406,6 @@ def main():
         logger.info("✅ Планировщик автопостов запущен")
     else:
         logger.warning("⚠️ Job queue недоступен")
-    logger.info("✅ Планировщик автопостов запущен")
     
     # ConversationHandler для регистрации
     registration_handler = get_registration_handler()
