@@ -136,8 +136,8 @@ def init_database():
         ''')
         
         # Заполняем ранги, если таблица пустая
-        cursor.execute('SELECT COUNT(*) FROM ranks')
-        if cursor.fetchone()[0] == 0:
+        cursor.execute('SELECT COUNT(*) AS count FROM ranks')
+        if cursor.fetchone()['count'] == 0:
             ranks_data = [
                 ('Новичок', 0, '🌱'),
                 ('Идеолог', 5, '💡'),
