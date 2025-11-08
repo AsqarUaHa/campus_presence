@@ -35,7 +35,19 @@ def init_database():
                 # Обновление существующей схемы: гарантируем наличие столбца is_admin
         cursor.execute('''
             ALTER TABLE users
-            ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE
+            ADD COLUMN IF NOT EXISTS username TEXT,
+            ADD COLUMN IF NOT EXISTS first_name TEXT,
+            ADD COLUMN IF NOT EXISTS last_name TEXT,
+            ADD COLUMN IF NOT EXISTS birth_date DATE,
+            ADD COLUMN IF NOT EXISTS team_role TEXT,
+            ADD COLUMN IF NOT EXISTS phone_number TEXT,
+            ADD COLUMN IF NOT EXISTS is_registered BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS total_checkins INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS current_rank TEXT DEFAULT 'Новичок',
+            ADD COLUMN IF NOT EXISTS geo_consent BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS last_update TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ''')
         
         # Таблица мероприятий (новая)
