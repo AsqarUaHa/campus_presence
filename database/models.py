@@ -32,6 +32,7 @@ def init_database():
             )
         ''')
         # Обновление существующей схемы: гарантируем наличие столбца is_admin
+                # Обновление существующей схемы: гарантируем наличие столбца is_admin
         cursor.execute('''
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE
