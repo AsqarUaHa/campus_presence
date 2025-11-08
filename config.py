@@ -6,7 +6,6 @@ PROXIMITY_RADIUS = ("500")
 PYTHON_VERSION = ("3.11.9")
 # Часовой пояс (UTC+5 для Алматы)
 TIMEZONE_OFFSET = ("5")
-TIMEZONE = timezone(timedelta(hours=TIMEZONE_OFFSET))
 
 # НОВАЯ ПЕРЕМЕННАЯ (для Админки)
 # Важно: ADMIN_IDS нужно читать как строку и превращать в список чисел (BIGINT)
