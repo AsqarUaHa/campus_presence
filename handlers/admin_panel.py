@@ -62,8 +62,10 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     elif data == 'admin_photo_contest':
         await show_photo_contest_menu(query)
+        
     elif data == 'admin_contest_view':
         await view_contest_photos(update, context)
+        
     elif data == 'admin_contest_end':
         # Завершение конкурса вручную
         await end_photo_contest(context)
@@ -71,11 +73,10 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             await query.message.reply_text("🏁 Конкурс завершён. Итоги отправлены участникам (если были фото).")
         except Exception:
             pass
+            
      elif data == 'admin_contest_delete':
         from handlers.contests import admin_contest_delete
         await admin_contest_delete(update, context)
-    # admin_contest_start/admin_contest_edit_time обрабатываются ConversationHandler entry_points
-    
     
     elif data == 'admin_panel':
         text = """
@@ -90,7 +91,8 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     elif data == 'admin_close':
         await query.message.delete()
-
+    elif data == 'admin_close':
+        await query.message.delete()
 
 async def show_monitoring(query, context):
     """Мониторинг присутствия"""
