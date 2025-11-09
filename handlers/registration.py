@@ -9,7 +9,7 @@ import re
 import logging
 
 from config import States
-from database.models import is_user_registered, complete_registration
+from database.models import is_user_registered, is_user_admin, complete_registration
 from utils.keyboards import get_main_keyboard
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,17 @@ logger = logging.getLogger(__name__)
 
 async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начало процесса регистрации"""
+    user_id = update.effective_user.id
+
+    # Если уже зарегистрирован — не даём регистрироваться повторно
+    if is_user_registered(user_id):
+        is_admin = is_user_admin(user_id)
+        await update.message.reply_text(
+            "✅ Вы уже зарегистрированы. Используйте меню ниже.",
+            reply_markup=get_main_keyboard(is_admin)
+        )
+        return ConversationHandler.END
+
     welcome_text = """
 👋 Добро пожаловать в Campus Check-in Bot!
 
