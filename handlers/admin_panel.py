@@ -415,7 +415,7 @@ async def admin_post_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Отправьте фото или напишите 'пропустить'.")
             return States.ADMIN_POST_MEDIA
     await update.message.reply_text(
-        "🕐 Укажите дату и время публикации в формате ДД.М.М.ГГГГ ЧЧ:ММ\n"
+        "🕐 Укажите дату и время публикации в формате ДД.ММ.ГГГГ ЧЧ:ММ\n"
         "Или напишите 'сейчас' для немедленной отправки.")
     return States.ADMIN_POST_DATETIME
 
@@ -457,7 +457,7 @@ async def admin_post_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await update.message.reply_text(
         f"✅ Пост создан (ID: {post_id}).\n"
-        f"🕐 Запланировано на: {dt.strftime('%d.%m.%Y %H:%М')}",
+        f"🕐 Запланировано на: {dt.strftime('%d.%m.%Y %H:%M')}",
         reply_markup=get_main_keyboard(is_admin=True)
     )
     context.user_data.pop('admin_post', None)
