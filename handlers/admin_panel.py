@@ -59,11 +59,11 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     elif data == 'admin_photo_contest':
         await show_photo_contest_menu(query)
-    elif data == 'contest_start':
+    elif data == 'admin_contest_start':
         await start_photo_contest(update, context)
-    elif data == 'contest_view':
+    elif data == 'admin_contest_view':
         await view_contest_photos(update, context)
-    elif data == 'contest_end':
+    elif data == 'admin_contest_end'
         # end_photo_contest ожидает context, оборачиваем вызов
         await end_photo_contest(context)
     
@@ -148,9 +148,9 @@ async def show_monitoring(query, context):
 async def show_photo_contest_menu(query):
     """Подменю конкурса фото"""
     keyboard = [
-        [InlineKeyboardButton("🚀 Запустить конкурс", callback_data='contest_start')],
-        [InlineKeyboardButton("🖼 Посмотреть фото", callback_data='contest_view')],
-        [InlineKeyboardButton("🏁 Завершить конкурс", callback_data='contest_end')],
+        [InlineKeyboardButton("🚀 Запустить конкурс", callback_data='admin_contest_start')],
+        [InlineKeyboardButton("🖼 Посмотреть фото", callback_data='admin_contest_view')],
+        [InlineKeyboardButton("🏁 Завершить конкурс", callback_data='admin_contest_end')],
         [InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')],
     ]
     await query.edit_message_text(
@@ -382,12 +382,17 @@ async def admin_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['admin_post'] = {'media_id': None, 'event_id': None}
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data='admin_cancel')]])
     await query.edit_message_text(
-        "📢 Создание поста\n\nВведите текст поста:")
+                "📢 Создание поста\n\nВведите текст поста:",
+        reply_markup=cancel_kb
+    )
     return States.ADMIN_POST_TEXT
 
 async def admin_post_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+    if text.lower() in ('отмена', 'cancel'):
+        return await admin_cancel_conv(update, context)
     if len(text) < 3:
         await update.message.reply_text("❌ Текст слишком короткий. Введите текст поста:")
         return States.ADMIN_POST_TEXT
@@ -398,17 +403,19 @@ async def admin_post_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return States.ADMIN_POST_MEDIA
 
 async def admin_post_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Фото или пропуск
+    # Фото или пропуск/отмена
     if update.message.photo:
         media_id = update.message.photo[-1].file_id
         context.user_data['admin_post']['media_id'] = media_id
     else:
         text = (update.message.text or '').strip().lower()
+        if text in ('отмена', 'cancel'):
+            return await admin_cancel_conv(update, context)
         if text not in ('пропустить', 'skip', 'нет', 'без фото'):
             await update.message.reply_text("Отправьте фото или напишите 'пропустить'.")
             return States.ADMIN_POST_MEDIA
     await update.message.reply_text(
-        "🕐 Укажите дату и время публикации в формате ДД.ММ.ГГГГ ЧЧ:ММ\n"
+        "🕐 Укажите дату и время публикации в формате ДД.М.М.ГГГГ ЧЧ:ММ\n"
         "Или напишите 'сейчас' для немедленной отправки.")
     return States.ADMIN_POST_DATETIME
 
@@ -433,6 +440,8 @@ def _parse_dt(text: str, tz) -> datetime | None:
 async def admin_post_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from config import TIMEZONE
     text = update.message.text
+    if (text or '').strip().lower() in ('отмена', 'cancel'):
+        return await admin_cancel_conv(update, context)
     dt = _parse_dt(text, TIMEZONE)
     if not dt:
         await update.message.reply_text(
@@ -448,7 +457,7 @@ async def admin_post_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await update.message.reply_text(
         f"✅ Пост создан (ID: {post_id}).\n"
-        f"🕐 Запланировано на: {dt.strftime('%d.%m.%Y %H:%M')}",
+        f"🕐 Запланировано на: {dt.strftime('%d.%m.%Y %H:%М')}",
         reply_markup=get_main_keyboard(is_admin=True)
     )
     context.user_data.pop('admin_post', None)
@@ -589,7 +598,10 @@ def get_admin_handler():
                 MessageHandler(filters.PHOTO, admin_kb_file)
             ],
         },
-        fallbacks=[],
+        fallbacks=[
+            CallbackQueryHandler(admin_cancel_conv, pattern='^admin_cancel$'),
+            MessageHandler(filters.Regex('^(Отмена|отмена|Cancel|cancel)$'), admin_cancel_conv),
+        ],
         name="admin_flows",
         persistent=False
     )
