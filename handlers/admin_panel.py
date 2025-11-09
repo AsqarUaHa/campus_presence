@@ -66,6 +66,10 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     elif data == 'admin_contest_end'
         # end_photo_contest ожидает context, оборачиваем вызов
         await end_photo_contest(context)
+        try:
+            await query.message.reply_text("🏁 Конкурс завершён. Итоги отправлены участникам (если были фото).")
+        except Exception:
+            pass
     
     elif data == 'admin_panel':
         text = """
