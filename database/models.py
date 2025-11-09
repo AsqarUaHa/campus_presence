@@ -133,12 +133,24 @@ def init_database():
                 id SERIAL PRIMARY KEY,
                 user_id BIGINT REFERENCES users(user_id),
                 photo_file_id TEXT NOT NULL,
+                description TEXT,
                 event_id INTEGER REFERENCES events(id),
                 votes INTEGER DEFAULT 0,
                 submission_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_winner BOOLEAN DEFAULT FALSE,
                 contest_date DATE DEFAULT CURRENT_DATE
             )
+        ''')
+
+        # Обновление схемы photo_contest: гарантируем наличие нужных столбцов
+        cursor.execute('''
+            ALTER TABLE photo_contest
+            ADD COLUMN IF NOT EXISTS description TEXT,
+            ADD COLUMN IF NOT EXISTS event_id INTEGER REFERENCES events(id),
+            ADD COLUMN IF NOT EXISTS votes INTEGER DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS submission_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS is_winner BOOLEAN DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS contest_date DATE DEFAULT CURRENT_DATE
         ''')
         
         # Таблица голосов за фото (новая)
