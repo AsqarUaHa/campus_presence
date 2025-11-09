@@ -42,6 +42,8 @@ from handlers.registration import (
     start_registration,
     get_registration_handler
 )
+from handlers.admin_panel import get_admin_handler
+from handlers.contests import upload_contest_photo
 from handlers.checkin import (
     request_checkin_location,
     checkout,
@@ -408,7 +410,11 @@ def main():
     # ConversationHandler для регистрации
     registration_handler = get_registration_handler()
     application.add_handler(registration_handler)
+
     
+    # ConversationHandler для админ-фич (создать пост/мероприятие/загрузка в БЗ)
+    admin_handler = get_admin_handler()
+    application.add_handler(admin_handler)
     # Команды
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("status", status_command))
@@ -423,7 +429,10 @@ def main():
             await handle_location_update(update, context)
     
     application.add_handler(MessageHandler(filters.LOCATION, location_handler))
+
     
+    # Загрузка фото на конкурс (глобальный обработчик фото)
+    application.add_handler(MessageHandler(filters.PHOTO, upload_contest_photo))
     # Текстовые команды из меню
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND,
