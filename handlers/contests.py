@@ -35,7 +35,7 @@ async def start_photo_contest(update: Update, context: ContextTypes.DEFAULT_TYPE
     contest_text = """
 📸 **Конкурс "Лучшее фото"**
 
-🎯 Отправьте своё лучшее фото дня!
+🎯 Участвуйте: пришлите одно фото дня с описанием (подписью).
 
 Условия:
 • Одно фото от участника
@@ -43,17 +43,24 @@ async def start_photo_contest(update: Update, context: ContextTypes.DEFAULT_TYPE
 • Голосование среди всех участников
 • Победитель получит признание! 🏆
 
-Чтобы участвовать, просто отправьте фото в чат с ботом.
+Нажмите «Участвовать», чтобы отправить фото.
     """
     
     bot = context.bot
     sent_count = 0
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+    join_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Участвовать", callback_data='contest_join')],
+        [InlineKeyboardButton("❌ Не участвовать", callback_data='contest_decline')]
+    ])
     
     for user in users:
         try:
             await bot.send_message(
                 chat_id=user['user_id'],
-                text=contest_text
+                text=contest_text,
+                reply_markup=join_kb
             )
             sent_count += 1
         except Exception as e:
@@ -67,16 +74,17 @@ async def start_photo_contest(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @registered_only
 async def upload_contest_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Загрузка фото на конкурс"""
+    """Загрузка/редактирование фото на конкурс по кнопкам участия"""
     if not update.message.photo:
-        await update.message.reply_text(
-            "❌ Пожалуйста, отправьте фото!",
-            reply_markup=get_main_keyboard()
-        )
+        await update.message.reply_text("❌ Пожалуйста, отправьте фото (с подписью — это описание).")
         return
     
     user_id = update.effective_user.id
-    photo = update.message.photo[-1]  # Берём самое большое фото
+    photo = update.message.photo[-1]
+    caption = (update.message.caption or '').strip()
+    
+    waiting_new = context.user_data.get('contest_waiting_photo')
+    editing = context.user_data.get('contest_edit_photo')
     
     # Проверяем, не загружал ли уже
     with get_db() as conn:
@@ -85,27 +93,50 @@ async def upload_contest_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             SELECT id FROM photo_contest
             WHERE user_id = %s AND contest_date = CURRENT_DATE
         ''', (user_id,))
-        
-        if cursor.fetchone():
+        existing = cursor.fetchone()
+
+        if editing:
+            if not existing:
+                await update.message.reply_text("❌ У вас нет заявки сегодня. Нажмите «Участвовать».")
+                context.user_data.pop('contest_edit_photo', None)
+                return
+            cursor.execute('''
+                UPDATE photo_contest
+                SET photo_file_id = %s, description = %s, submission_time = CURRENT_TIMESTAMP
+                WHERE id = %s
+            ''', (photo.file_id, caption, existing['id']))
+            conn.commit()
+            context.user_data.pop('contest_edit_photo', None)
+            
             await update.message.reply_text(
-                "❌ Вы уже загрузили фото на сегодняшний конкурс!",
-                reply_markup=get_main_keyboard()
+                "✅ Фото и описание обновлены!",
             )
+            await send_participation_controls(update, context)
             return
         
-        # Сохраняем фото
-        cursor.execute('''
-            INSERT INTO photo_contest (user_id, photo_file_id)
-            VALUES (%s, %s)
-        ''', (user_id, photo.file_id))
-        conn.commit()
-    
-    await update.message.reply_text(
-        "✅ Ваше фото принято на конкурс!\n"
-        "🗳 Голосование начнётся после окончания приёма фото.",
-        reply_markup=get_main_keyboard()
-    )
+        if waiting_new:
+            if existing:
+                await update.message.reply_text("❌ Вы уже участвуете сегодня. Используйте «Редактировать».")
+                context.user_data.pop('contest_waiting_photo', None)
+                await send_participation_controls(update, context)
+                return
+            cursor.execute('''
+                INSERT INTO photo_contest (user_id, photo_file_id, description)
+                VALUES (%s, %s, %s)
+            ''', (user_id, photo.file_id, caption))
+            conn.commit()
+            context.user_data.pop('contest_waiting_photo', None)
+            await update.message.reply_text("✅ Вы участвуете в конкурсе!")
+            await send_participation_controls(update, context)
+            return
 
+        # Если пользователь прислал фото без нажатия кнопок
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Участвовать", callback_data='contest_join')]])
+        await update.message.reply_text(
+            "ℹ️ Чтобы участвовать в конкурсе, нажмите «Участвовать», затем отправьте фото.",
+            reply_markup=kb
+        )
 
 @admin_callback_only
 async def view_contest_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -145,6 +176,61 @@ async def view_contest_photos(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.message.reply_photo(
             photo=photo['photo_file_id'],
             caption=caption
+        )
+
+async def send_participation_controls(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправить пользователю клавиатуру управления участием."""
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Отказаться", callback_data='contest_cancel')],
+        [InlineKeyboardButton("✏️ Редактировать", callback_data='contest_edit')]
+    ])
+    try:
+        await update.message.reply_text("Управление участием:", reply_markup=kb)
+    except Exception:
+        pass
+
+
+async def handle_contest_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка пользовательских callback по конкурсу."""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = query.from_user.id
+
+    if data == 'contest_join':
+        context.user_data['contest_waiting_photo'] = True
+        await query.message.reply_text(
+            "📸 Отлично! Отправьте одно фото одним сообщением.\n"
+            "Добавьте описание как подпись к фото."
+        )
+    elif data == 'contest_decline':
+        await query.message.reply_text("Хорошо, вы можете присоединиться позже, если передумаете.")
+    elif data == 'contest_cancel':
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                DELETE FROM photo_contest
+                WHERE user_id = %s AND contest_date = CURRENT_DATE
+            ''', (user_id,))
+            conn.commit()
+        context.user_data.pop('contest_waiting_photo', None)
+        context.user_data.pop('contest_edit_photo', None)
+        await query.message.reply_text("❌ Вы отказались от участия сегодня.")
+    elif data == 'contest_edit':
+        # Проверим, что есть заявка
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id FROM photo_contest
+                WHERE user_id = %s AND contest_date = CURRENT_DATE
+            ''', (user_id,))
+            row = cursor.fetchone()
+        if not row:
+            await query.message.reply_text("❌ У вас ещё нет фото сегодня. Нажмите «Участвовать».")
+            return
+        context.user_data['contest_edit_photo'] = True
+        await query.message.reply_text(
+            "✏️ Отправьте новое фото одним сообщением с новой подписью — мы заменим текущее фото и описание."
         )
 
 
