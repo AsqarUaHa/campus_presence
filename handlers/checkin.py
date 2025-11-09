@@ -10,7 +10,7 @@ import logging
 
 from config import CAMPUS_LATITUDE, CAMPUS_LONGITUDE, PROXIMITY_RADIUS, TIMEZONE
 from database.db_manager import get_db
-from database.models import increment_checkins, get_active_event
+from database.models import increment_checkins, get_active_event, is_user_admin
 from utils.keyboards import get_main_keyboard
 from utils.decorators import registered_only
 
@@ -34,10 +34,11 @@ async def request_checkin_location(update: Update, context: ContextTypes.DEFAULT
         result = cursor.fetchone()
         
         if not result or not result['geo_consent']:
+            is_admin = is_user_admin(user_id)
             await update.message.reply_text(
                 "❌ Для отметки в кампусе необходимо разрешение на использование геолокации.\n\n"
                 "Перейдите в ⚙️ Настройки и включите геолокацию.",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(is_admin)
             )
             return
     
@@ -51,9 +52,10 @@ async def request_checkin_location(update: Update, context: ContextTypes.DEFAULT
         ''', (user_id, today))
         
         if cursor.fetchone():
+            is_admin = is_user_admin(user_id)
             await update.message.reply_text(
                 "✅ Вы уже отмечены в кампусе сегодня!",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(is_admin)
             )
             return
     
@@ -95,12 +97,13 @@ async def handle_checkin_location(update: Update, context: ContextTypes.DEFAULT_
     
     # Проверяем расстояние (должно быть <= 300м)
     if distance > PROXIMITY_RADIUS:
+        is_admin = is_user_admin(user_id)
         await update.message.reply_text(
             f"❌ Вы находитесь слишком далеко от кампуса!\n\n"
             f"📏 Расстояние: {int(distance)} метров\n"
             f"⚠️ Необходимо: не более {PROXIMITY_RADIUS} метров\n\n"
             "Подойдите ближе к кампусу и попробуйте снова.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(is_admin)
         )
         return
     
@@ -159,7 +162,8 @@ async def handle_checkin_location(update: Update, context: ContextTypes.DEFAULT_
         
         message += f"\n\n🎉 **Поздравляем!**\n{emoji} Вы получили новый ранг: **{new_rank}**!"
     
-    await update.message.reply_text(message, reply_markup=get_main_keyboard())
+    is_admin = is_user_admin(user_id)
+    await update.message.reply_text(message, reply_markup=get_main_keyboard(is_admin))
 
 
 @registered_only
@@ -182,9 +186,10 @@ async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         record = cursor.fetchone()
         
         if not record:
+            is_admin = is_user_admin(user_id)
             await update.message.reply_text(
                 "❌ Вы не отмечены в кампусе!",
-                reply_markup=get_main_keyboard()
+                reply_markup=get_main_keyboard(is_admin)
             )
             return
         
@@ -203,12 +208,13 @@ async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
         duration = now - check_in.astimezone(TIMEZONE)
         hours = int(duration.total_seconds() // 3600)
         minutes = int((duration.total_seconds() % 3600) // 60)
-    
+        
+    is_admin = is_user_admin(user_id)
     await update.message.reply_text(
         f"👋 Вы отметились как ушедший!\n\n"
         f"🕐 Время ухода: {now.strftime('%H:%M')}\n"
         f"⏱ Время пребывания: {hours}ч {minutes}мин",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(is_admin)
     )
 
 
@@ -244,8 +250,9 @@ async def handle_location_update(update: Update, context: ContextTypes.DEFAULT_T
         conn.commit()
     
     status_text = f"🟡 Вы рядом с кампусом ({int(distance)}м)" if is_near else f"📍 Расстояние до кампуса: {int(distance)}м"
-    
+
+    is_admin = is_user_admin(user_id)
     await update.message.reply_text(
         f"✅ Геолокация обновлена!\n{status_text}",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(is_admin)
     )
