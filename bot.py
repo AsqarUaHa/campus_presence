@@ -43,7 +43,7 @@ from handlers.registration import (
     get_registration_handler
 )
 from handlers.admin_panel import get_admin_handler
-from handlers.contests import upload_contest_photo
+from handlers.contests import upload_contest_photo, end_photo_contest
 from handlers.checkin import (
     request_checkin_location,
     checkout,
@@ -407,6 +407,18 @@ def main():
     else:
         logger.warning("⚠️ Job queue недоступен. Установите: pip install 'python-telegram-bot[job-queue]'")
     
+        # План: автоматическое завершение фотоконкурса ежедневно в заданное время
+        try:
+            from config import CONTEST_END_TIME, TIMEZONE
+            hh, mm = [int(x) for x in CONTEST_END_TIME.split(':')]
+            application.job_queue.run_daily(
+                end_photo_contest,
+                time=dt_time(hour=hh, minute=mm, tzinfo=TIMEZONE),
+                name="end_photo_contest"
+            )
+            logger.info(f"✅ Планировщик завершения конкурса фото: {hh:02d}:{mm:02d}")
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось назначить завершение конкурса: {e}")
     # ConversationHandler для регистрации
     registration_handler = get_registration_handler()
     application.add_handler(registration_handler)
