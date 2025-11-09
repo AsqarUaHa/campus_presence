@@ -175,10 +175,12 @@ async def registration_phone(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 📍 Для отметки в кампусе нажмите "Я в кампусе" и отправьте вашу геолокацию.
         """
-        
+
+        from database.models import is_user_admin
+        is_admin = is_user_admin(user_id)
         await update.message.reply_text(
             summary,
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(is_admin)
         )
         
         # Очищаем данные регистрации
