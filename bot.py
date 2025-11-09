@@ -119,7 +119,20 @@ async def start(update: Update, context):
     user_id = user.id
     
     create_user(user_id, user.username or "Без username", user.full_name)
+
     
+    # Гарантируем, что админ сразу видит админ‑кнопку, даже если его записи не было при старте бота
+    from config import ADMIN_IDS
+    if user_id in ADMIN_IDS:
+        try:
+            from database.db_manager import get_db
+            with get_db() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE users SET is_admin = TRUE WHERE user_id = %s', (user_id,))
+                conn.commit()
+        except Exception:
+            pass
+            
     if not is_user_registered(user_id):
         return await start_registration(update, context)
     
