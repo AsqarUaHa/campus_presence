@@ -19,6 +19,27 @@ def get_local_time():
     """Получить текущее локальное время"""
     return datetime.now(TIMEZONE)
 
+# ==========================
+# Парсер локального времени для конкурса
+# ==========================
+
+def _parse_dt_local(text: str):
+    text = (text or '').strip().lower()
+    from datetime import datetime as dt
+    # Поддержка: HH:MM (сегодня), ДД.ММ ЧЧ:ММ, ДД.ММ.ГГГГ ЧЧ:ММ
+    for fmt in ('%H:%M', '%d.%m %H:%M', '%d.%m.%Y %H:%M'):
+        try:
+            if fmt == '%H:%M':
+                t = dt.strptime(text, '%H:%M').time()
+                today = get_local_time().date()
+                return dt.combine(today, t).replace(tzinfo=TIMEZONE)
+            parsed = dt.strptime(text, fmt)
+            if fmt == '%d.%m %H:%M':
+                parsed = parsed.replace(year=get_local_time().year)
+            return parsed.replace(tzinfo=TIMEZONE)
+        except Exception:
+            continue
+    return None
 
 @admin_callback_only
 async def start_photo_contest(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -130,6 +151,87 @@ async def upload_contest_photo(update: Update, context: ContextTypes.DEFAULT_TYP
             await send_participation_controls(update, context)
             return
 
+
+    # ==========================
+# Админ: запуск/редактирование/удаление конкурса
+# ==========================
+
+@admin_callback_only
+async def admin_contest_start_begin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "📸 Запуск конкурса фото\n\nУкажите время окончания приёма фото (форматы: HH:MM, ДД.ММ ЧЧ:ММ, ДД.ММ.ГГГГ ЧЧ:ММ)."
+    )
+    return States.ADMIN_CONTEST_ENDTIME
+
+@admin_callback_only
+async def admin_contest_edit_time_begin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text(
+        "⏱ Новое время окончания приёма фото (HH:MM или дата+время):"
+    )
+    return States.ADMIN_CONTEST_ENDTIME
+
+async def _schedule_contest_end(context: ContextTypes.DEFAULT_TYPE, end_dt):
+    # Планируем завершение с именем, зависящим от даты конкурса
+    date_key = get_local_time().date().strftime('%Y%m%d')
+    name = f"photo_contest_end_{date_key}"
+    try:
+        # Отменим предыдущие задачи с этим именем
+        for job in context.job_queue.get_jobs_by_name(name):
+            job.schedule_removal()
+    except Exception:
+        pass
+    now = get_local_time()
+    delay = max(0, int((end_dt - now).total_seconds()))
+    context.job_queue.run_once(end_photo_contest, when=delay, data={'contest_date': get_local_time().date().isoformat()}, name=name)
+
+async def admin_contest_set_endtime_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    end_dt = _parse_dt_local(text)
+    if not end_dt:
+        await update.message.reply_text("❌ Неверный формат. Примеры: 23:30, 09.11 23:30, 09.11.2025 23:30")
+        return States.ADMIN_CONTEST_ENDTIME
+    # Сохраняем/обновляем расписание в БД
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO photo_contest_schedule (contest_date, end_time, is_closed)
+            VALUES (CURRENT_DATE, %s, FALSE)
+            ON CONFLICT (contest_date) DO UPDATE SET end_time = EXCLUDED.end_time, is_closed = FALSE
+        ''', (end_dt,))
+        conn.commit()
+    # Планируем задачу
+    if context.job_queue:
+        await _schedule_contest_end(context, end_dt)
+    # Рассылаем приглашение
+    await start_photo_contest(update, context)
+    await update.message.reply_text(
+        f"✅ Конкурс запущен. Приём фото до {end_dt.strftime('%d.%m.%Y %H:%M')}."
+    )
+    return ConversationHandler.END
+
+@admin_callback_only
+async def admin_contest_delete(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('DELETE FROM photo_contest_schedule WHERE contest_date = CURRENT_DATE')
+        cursor.execute('DELETE FROM photo_contest WHERE contest_date = CURRENT_DATE')
+        conn.commit()
+    # Отмена job
+    try:
+        date_key = get_local_time().date().strftime('%Y%m%d')
+        name = f"photo_contest_end_{date_key}"
+        for job in context.job_queue.get_jobs_by_name(name):
+            job.schedule_removal()
+    except Exception:
+        pass
+    await query.message.reply_text("🗑 Конкурс на сегодня удалён.")
+
         # Если пользователь прислал фото без нажатия кнопок
         from telegram import InlineKeyboardMarkup, InlineKeyboardButton
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Участвовать", callback_data='contest_join')]])
@@ -235,12 +337,28 @@ async def handle_contest_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def end_photo_contest(context: ContextTypes.DEFAULT_TYPE):
-    """Автоматическое завершение конкурса в 02:00"""
+    """Завершение фотоконкурса по расписанию или вручную"""
     now = get_local_time()
+    # Определим дату конкурса из job.data (если есть)
+    target_date = now.date()
+    try:
+        if getattr(context, 'job', None) and context.job.data and context.job.data.get('contest_date'):
+            from datetime import date as _date
+            target_date = _date.fromisoformat(context.job.data['contest_date'])
+    except Exception:
+        pass
+
     
-    with get_db() as conn:
         cursor = conn.cursor()
-        
+        # Проверка: не закрыт ли уже
+        cursor.execute('''
+            SELECT is_closed FROM photo_contest_schedule WHERE contest_date = %s
+        ''', (target_date,))
+        row = cursor.fetchone()
+        if row and row.get('is_closed'):
+            logger.info("Фотоконкурс уже закрыт для даты %s", target_date)
+            return
+            
         # Находим победителя
         cursor.execute('''
             SELECT 
@@ -255,20 +373,31 @@ async def end_photo_contest(context: ContextTypes.DEFAULT_TYPE):
             WHERE pc.contest_date = %s
             ORDER BY pc.votes DESC
             LIMIT 1
-        ''', (now.date(),))
+        ''', (target_date,))
         
         winner = cursor.fetchone()
         
         if not winner:
-            logger.info("Нет фото на конкурсе сегодня")
+            logger.info("Нет фото на конкурсе за дату %s", target_date)
+            cursor.execute('''
+                INSERT INTO photo_contest_schedule (contest_date, end_time, is_closed)
+                VALUES (%s, CURRENT_TIMESTAMP, TRUE)
+                ON CONFLICT (contest_date) DO UPDATE SET is_closed = TRUE
+            ''', (target_date,))
+            conn.commit()
             return
         
-        # Отмечаем победителя
+        # Отмечаем победителя и закрываем конкурс
         cursor.execute('''
             UPDATE photo_contest
             SET is_winner = TRUE
             WHERE id = %s
         ''', (winner['id'],))
+        cursor.execute('''
+            INSERT INTO photo_contest_schedule (contest_date, end_time, is_closed)
+            VALUES (%s, CURRENT_TIMESTAMP, TRUE)
+            ON CONFLICT (contest_date) DO UPDATE SET is_closed = TRUE
+        ''', (target_date,))
         conn.commit()
         
         # Уведомляем всех участников
