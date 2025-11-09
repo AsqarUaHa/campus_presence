@@ -50,7 +50,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     if data == 'admin_monitoring':
         await show_monitoring(query, context)
-
+    
     elif data == 'admin_all_users':
         await show_all_registered_users(query)
     
@@ -59,7 +59,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     elif data == 'admin_export_data':
         await show_export_menu(query, context)
-
+    
     elif data == 'admin_photo_contest':
         await show_photo_contest_menu(query)
     elif data == 'admin_contest_start':
@@ -152,6 +152,7 @@ async def show_monitoring(query, context):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+
 async def show_photo_contest_menu(query):
     """Подменю конкурса фото"""
     keyboard = [
@@ -164,7 +165,8 @@ async def show_photo_contest_menu(query):
         "📸 Конкурс фото — выберите действие:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    
+
+
 async def show_events_archive(query, context):
     """Архив мероприятий"""
     with get_db() as conn:
@@ -377,6 +379,7 @@ async def handle_event_details(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+
 # ===============================
 # Список всех зарегистрированных пользователей (с координатами)
 # ===============================
@@ -447,7 +450,6 @@ async def show_all_registered_users(query):
     kb = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')]]
     await query.edit_message_text(text[:4000], reply_markup=InlineKeyboardMarkup(kb))
 
-
 # ===============================
 # Админ-флоу: Создать пост
 # ===============================
@@ -460,7 +462,7 @@ async def admin_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['admin_post'] = {'media_id': None, 'event_id': None}
     cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data='admin_cancel')]])
     await query.edit_message_text(
-                "📢 Создание поста\n\nВведите текст поста:",
+        "📢 Создание поста\n\nВведите текст поста:",
         reply_markup=cancel_kb
     )
     return States.ADMIN_POST_TEXT
@@ -593,6 +595,12 @@ async def admin_event_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ''', (data['name'], data['start'], data['end'], desc, update.effective_user.id))
         event_id = cursor.fetchone()['id']
         conn.commit()
+    # Планируем уведомление всем пользователям через 5 минут
+    try:
+        if context.job_queue:
+            context.job_queue.run_once(announce_event_job, when=300, data={'event_id': event_id})
+    except Exception:
+        pass
     await update.message.reply_text(
         f"✅ Мероприятие создано (ID: {event_id})\n"
         f"📅 {data['name']} | {data['start'].strftime('%d.%m %H:%M')} — {data['end'].strftime('%d.%m %H:%M')}",
@@ -601,6 +609,119 @@ async def admin_event_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('admin_event', None)
     return ConversationHandler.END
 
+
+# ===============================
+# Админ-флоу: Управление постами
+# ===============================
+async def admin_posts_manage_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    return await _render_posts_list(query, context)
+
+async def _render_posts_list(query, context):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, text, scheduled_time, status
+            FROM posts
+            ORDER BY scheduled_time DESC
+            LIMIT 20
+        ''')
+        posts = cursor.fetchall()
+    if not posts:
+        await query.edit_message_text(
+            "🗂 Постов пока нет.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')]])
+        )
+        return States.ADMIN_POST_MANAGE
+    text = "🗂 Управление постами (последние 20):\n\n"
+    keyboard = []
+    from config import TIMEZONE
+    from datetime import timezone as dt_tz
+    for p in posts:
+        dt = p['scheduled_time']
+        if dt and dt.tzinfo is None:
+            dt = dt.replace(tzinfo=dt_tz.utc)
+        when = dt.astimezone(TIMEZONE).strftime('%d.%m %H:%M') if dt else '-'
+        status = p['status']
+        text_part = (p['text'] or '')[:40].replace('\n', ' ')
+        keyboard.append([
+            InlineKeyboardButton(f"#{p['id']} • {when} • {status}", callback_data='noop')
+        ])
+        keyboard.append([
+            InlineKeyboardButton("✏️ Текст", callback_data=f"post_edit_text_{p['id']}"),
+            InlineKeyboardButton("🕐 Время", callback_data=f"post_edit_time_{p['id']}"),
+            InlineKeyboardButton("🗑 Удалить", callback_data=f"post_delete_{p['id']}")
+        ])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return States.ADMIN_POST_MANAGE
+
+async def admin_posts_manage_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith('post_delete_'):
+        post_id = int(data.replace('post_delete_', ''))
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM posts WHERE id = %s', (post_id,))
+            conn.commit()
+        await query.answer("Удалено", show_alert=False)
+        return await _render_posts_list(query, context)
+    elif data.startswith('post_edit_text_'):
+        post_id = int(data.replace('post_edit_text_', ''))
+        context.user_data['edit_post_id'] = post_id
+        await query.message.reply_text("Введите новый текст поста (или 'Отмена'):")
+        return States.ADMIN_POST_EDIT_TEXT
+    elif data.startswith('post_edit_time_'):
+        post_id = int(data.replace('post_edit_time_', ''))
+        context.user_data['edit_post_id'] = post_id
+        await query.message.reply_text("Введите новую дату и время (ДД.ММ.ГГГГ ЧЧ:ММ):")
+        return States.ADMIN_POST_EDIT_TIME
+    elif data == 'admin_panel':
+        # Вернуть в админ-панель через глобальный хендлер
+        await query.edit_message_text("Возврат в админ-панель...", reply_markup=get_admin_keyboard())
+        return ConversationHandler.END
+
+async def admin_post_edit_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    post_id = context.user_data.get('edit_post_id')
+    if not post_id:
+        await update.message.reply_text("❌ Не найден пост для редактирования.")
+        return ConversationHandler.END
+    new_text = update.message.text.strip()
+    if len(new_text) < 1:
+        await update.message.reply_text("❌ Текст пуст. Введите заново:")
+        return States.ADMIN_POST_EDIT_TEXT
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE posts SET text = %s WHERE id = %s', (new_text, post_id))
+        conn.commit()
+    await update.message.reply_text("✅ Текст поста обновлён.")
+    # Обновим список
+    context.user_data.pop('edit_post_id', None)
+    # Отрисуем заново список через сообщ. с кнопками (нужно найти последнее сообщение ботa)
+    # Проще — попросим нажать кнопку снова
+    await update.message.reply_text("Откройте снова: 🔧 Админ-панель → 🗂 Управление постами")
+    return ConversationHandler.END
+
+async def admin_post_edit_time_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    post_id = context.user_data.get('edit_post_id')
+    if not post_id:
+        await update.message.reply_text("❌ Не найден пост для редактирования.")
+        return ConversationHandler.END
+    dt = _parse_dt(update.message.text, TIMEZONE)
+    if not dt:
+        await update.message.reply_text("❌ Неверный формат. ДД.ММ.ГГГГ ЧЧ:ММ:")
+        return States.ADMIN_POST_EDIT_TIME
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE posts SET scheduled_time = %s, status = CASE WHEN status = \'sent\' THEN status ELSE \'pending\' END WHERE id = %s', (dt, post_id))
+        conn.commit()
+    await update.message.reply_text("✅ Время публикации обновлено.")
+    context.user_data.pop('edit_post_id', None)
+    await update.message.reply_text("Откройте снова: 🔧 Админ-панель → 🗂 Управление постами")
+    return ConversationHandler.END
 
 # ===============================
 # Админ-флоу: Загрузка в Базу знаний
@@ -645,6 +766,232 @@ async def admin_kb_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('kb_title', None)
     return ConversationHandler.END
 
+# ===============================
+# Админ-флоу: Управление мероприятиями
+# ===============================
+async def admin_events_manage_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    return await _render_events_list(query, context)
+
+async def _render_events_list(query, context):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, name, start_time, end_time
+            FROM events
+            WHERE end_time >= CURRENT_TIMESTAMP
+            ORDER BY start_time
+            LIMIT 20
+        ''')
+        events = cursor.fetchall()
+    if not events:
+        await query.edit_message_text(
+            "🗓 Нет предстоящих мероприятий.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')]])
+        )
+        return States.ADMIN_EVENT_MANAGE
+    text = "🗓 Управление мероприятиями (ближайшие 20):\n\n"
+    keyboard = []
+    from config import TIMEZONE
+    from datetime import timezone as dt_tz
+    for e in events:
+        s = e['start_time']
+        if s and s.tzinfo is None:
+            s = s.replace(tzinfo=dt_tz.utc)
+        when = s.astimezone(TIMEZONE).strftime('%d.%m %H:%M') if s else '-'
+        keyboard.append([
+            InlineKeyboardButton(f"#{e['id']} • {when} • {e['name'][:20]}", callback_data='noop')
+        ])
+        keyboard.append([
+            InlineKeyboardButton("✏️ Название", callback_data=f"event_edit_name_{e['id']}"),
+            InlineKeyboardButton("📝 Описание", callback_data=f"event_edit_desc_{e['id']}"),
+            InlineKeyboardButton("🕐 Старт", callback_data=f"event_edit_start_{e['id']}"),
+            InlineKeyboardButton("⏱ Конец", callback_data=f"event_edit_end_{e['id']}"),
+            InlineKeyboardButton("🗑 Удалить", callback_data=f"event_delete_{e['id']}")
+        ])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return States.ADMIN_EVENT_MANAGE
+
+async def admin_events_manage_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith('event_delete_'):
+        event_id = int(data.replace('event_delete_', ''))
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM events WHERE id = %s', (event_id,))
+            conn.commit()
+        await query.answer("Удалено", show_alert=False)
+        return await _render_events_list(query, context)
+    elif data.startswith('event_edit_name_'):
+        event_id = int(data.replace('event_edit_name_', ''))
+        context.user_data['edit_event_id'] = event_id
+        await query.message.reply_text("Введите новое название:")
+        return States.ADMIN_EVENT_EDIT_NAME
+    elif data.startswith('event_edit_desc_'):
+        event_id = int(data.replace('event_edit_desc_', ''))
+        context.user_data['edit_event_id'] = event_id
+        await query.message.reply_text("Введите новое описание (или 'пропустить' чтобы очистить):")
+        return States.ADMIN_EVENT_EDIT_DESC
+    elif data.startswith('event_edit_start_'):
+        event_id = int(data.replace('event_edit_start_', ''))
+        context.user_data['edit_event_id'] = event_id
+        await query.message.reply_text("Введите новую дату и время начала (ДД.ММ.ГГГГ ЧЧ:ММ):")
+        return States.ADMIN_EVENT_EDIT_START
+    elif data.startswith('event_edit_end_'):
+        event_id = int(data.replace('event_edit_end_', ''))
+        context.user_data['edit_event_id'] = event_id
+        await query.message.reply_text("Введите новую дату и время окончания (ДД.ММ.ГГГГ ЧЧ:ММ):")
+        return States.ADMIN_EVENT_EDIT_END
+    elif data == 'admin_panel':
+        await query.edit_message_text("Возврат в админ-панель...", reply_markup=get_admin_keyboard())
+        return ConversationHandler.END
+
+async def admin_event_edit_name_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    event_id = context.user_data.get('edit_event_id')
+    if not event_id:
+        return ConversationHandler.END
+    name = update.message.text.strip()
+    if len(name) < 3:
+        await update.message.reply_text("❌ Слишком коротко. Введите снова:")
+        return States.ADMIN_EVENT_EDIT_NAME
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE events SET name = %s WHERE id = %s', (name, event_id))
+        conn.commit()
+    await update.message.reply_text("✅ Название обновлено.")
+    context.user_data.pop('edit_event_id', None)
+    await update.message.reply_text("Откройте снова: 🔧 Админ-панель → 🗓 Управление мероприятиями")
+    return ConversationHandler.END
+
+async def admin_event_edit_desc_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    event_id = context.user_data.get('edit_event_id')
+    if not event_id:
+        return ConversationHandler.END
+    desc = update.message.text.strip()
+    if desc.lower() in ('пропустить', 'skip'):
+        desc = None
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE events SET description = %s WHERE id = %s', (desc, event_id))
+        conn.commit()
+    await update.message.reply_text("✅ Описание обновлено.")
+    context.user_data.pop('edit_event_id', None)
+    await update.message.reply_text("Откройте снова: 🔧 Админ-панель → 🗓 Управление мероприятиями")
+    return ConversationHandler.END
+
+async def admin_event_edit_start_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    event_id = context.user_data.get('edit_event_id')
+    if not event_id:
+        return ConversationHandler.END
+    dt = _parse_dt(update.message.text, TIMEZONE)
+    if not dt:
+        await update.message.reply_text("❌ Неверный формат. ДД.ММ.ГГГГ ЧЧ:ММ:")
+        return States.ADMIN_EVENT_EDIT_START
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE events SET start_time = %s WHERE id = %s', (dt, event_id))
+        conn.commit()
+    await update.message.reply_text("✅ Время начала обновлено.")
+    context.user_data.pop('edit_event_id', None)
+    await update.message.reply_text("Откройте снова: 🔧 Админ-панель → 🗓 Управление мероприятиями")
+    return ConversationHandler.END
+
+async def admin_event_edit_end_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    event_id = context.user_data.get('edit_event_id')
+    if not event_id:
+        return ConversationHandler.END
+    dt = _parse_dt(update.message.text, TIMEZONE)
+    if not dt:
+        await update.message.reply_text("❌ Неверный формат. ДД.ММ.ГГГГ ЧЧ:ММ:")
+        return States.ADMIN_EVENT_EDIT_END
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE events SET end_time = %s WHERE id = %s', (dt, event_id))
+        conn.commit()
+    await update.message.reply_text("✅ Время окончания обновлено.")
+    context.user_data.pop('edit_event_id', None)
+    await update.message.reply_text("Откройте снова: 🔧 Админ-панель → 🗓 Управление мероприятиями")
+    return ConversationHandler.END
+
+# ===============================
+# Админ-флоу: Управление Базой знаний
+# ===============================
+async def admin_kb_manage_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    return await _render_kb_list(query, context)
+
+async def _render_kb_list(query, context):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, title, file_type
+            FROM knowledge_base
+            ORDER BY upload_time DESC
+            LIMIT 20
+        ''')
+        files = cursor.fetchall()
+    if not files:
+        await query.edit_message_text(
+            "📚 База знаний пуста.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')]])
+        )
+        return States.ADMIN_KB_MANAGE
+    text = "🗃 Управление Базой знаний (последние 20):\n\n"
+    keyboard = []
+    for f in files:
+        keyboard.append([InlineKeyboardButton(f"#{f['id']} • {f['title'][:25]}", callback_data='noop')])
+        keyboard.append([
+            InlineKeyboardButton("✏️ Переименовать", callback_data=f"kb_rename_{f['id']}"),
+            InlineKeyboardButton("🗑 Удалить", callback_data=f"kb_delete_{f['id']}")
+        ])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    return States.ADMIN_KB_MANAGE
+
+async def admin_kb_manage_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data.startswith('kb_delete_'):
+        kb_id = int(data.replace('kb_delete_', ''))
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM knowledge_base WHERE id = %s', (kb_id,))
+            conn.commit()
+        await query.answer("Удалено", show_alert=False)
+        return await _render_kb_list(query, context)
+    elif data.startswith('kb_rename_'):
+        kb_id = int(data.replace('kb_rename_', ''))
+        context.user_data['rename_kb_id'] = kb_id
+        await query.message.reply_text("Введите новое имя файла:")
+        return States.ADMIN_KB_RENAME
+    elif data == 'admin_panel':
+        await query.edit_message_text("Возврат в админ-панель...", reply_markup=get_admin_keyboard())
+        return ConversationHandler.END
+
+async def admin_kb_rename_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb_id = context.user_data.get('rename_kb_id')
+    if not kb_id:
+        return ConversationHandler.END
+    title = update.message.text.strip()
+    if len(title) < 1:
+        await update.message.reply_text("❌ Пустое имя. Введите снова:")
+        return States.ADMIN_KB_RENAME
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE knowledge_base SET title = %s WHERE id = %s', (title, kb_id))
+        conn.commit()
+    await update.message.reply_text("✅ Имя обновлено.")
+    context.user_data.pop('rename_kb_id', None)
+    await update.message.reply_text("Откройте снова: 🔧 Админ-панель → 🗃 Управление Базой знаний")
+    return ConversationHandler.END
+
+
 async def admin_cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена любого админ-диалога."""
     try:
@@ -664,34 +1011,60 @@ async def admin_cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-
 def get_admin_handler():
-    """ConversationHandler для админ-флоу (посты/мероприятия/БЗ)."""
+    """ConversationHandler для админ-флоу (создание/управление постами, мероприятиями и БЗ)."""
     from telegram.ext import CallbackQueryHandler, MessageHandler, filters
     return ConversationHandler(
         entry_points=[
+            # Создание
             CallbackQueryHandler(admin_post_start, pattern='^admin_create_post$'),
             CallbackQueryHandler(admin_event_start, pattern='^admin_create_event$'),
             CallbackQueryHandler(admin_kb_start, pattern='^admin_upload_kb$'),
+            # Управление
+            CallbackQueryHandler(admin_posts_manage_start, pattern='^admin_manage_posts$'),
+            CallbackQueryHandler(admin_events_manage_start, pattern='^admin_manage_events$'),
+            CallbackQueryHandler(admin_kb_manage_start, pattern='^admin_manage_kb$'),
         ],
         states={
+            # Посты: создание
             States.ADMIN_POST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_text)],
             States.ADMIN_POST_MEDIA: [
                 MessageHandler(filters.PHOTO, admin_post_media),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_media)
             ],
             States.ADMIN_POST_DATETIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_datetime)],
+            # Посты: управление
+            States.ADMIN_POST_MANAGE: [
+                CallbackQueryHandler(admin_posts_manage_cb, pattern='^(post_edit_text_|post_edit_time_|post_delete_|admin_panel)$')
+            ],
+            States.ADMIN_POST_EDIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_edit_text_input)],
+            States.ADMIN_POST_EDIT_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_edit_time_input)],
 
+            # События: создание
             States.ADMIN_EVENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_name)],
             States.ADMIN_EVENT_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_start_time)],
             States.ADMIN_EVENT_END: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_end_time)],
             States.ADMIN_EVENT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_desc)],
+            # События: управление
+            States.ADMIN_EVENT_MANAGE: [
+                CallbackQueryHandler(admin_events_manage_cb, pattern='^(event_edit_name_|event_edit_desc_|event_edit_start_|event_edit_end_|event_delete_|admin_panel)$')
+            ],
+            States.ADMIN_EVENT_EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_edit_name_input)],
+            States.ADMIN_EVENT_EDIT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_edit_desc_input)],
+            States.ADMIN_EVENT_EDIT_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_edit_start_input)],
+            States.ADMIN_EVENT_EDIT_END: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_edit_end_input)],
 
+            # База знаний: загрузка
             States.ADMIN_KB_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_kb_title)],
             States.ADMIN_KB_FILE: [
                 MessageHandler(filters.Document.ALL, admin_kb_file),
                 MessageHandler(filters.PHOTO, admin_kb_file)
             ],
+            # База знаний: управление
+            States.ADMIN_KB_MANAGE: [
+                CallbackQueryHandler(admin_kb_manage_cb, pattern='^(kb_rename_|kb_delete_|admin_panel)$')
+            ],
+            States.ADMIN_KB_RENAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_kb_rename_input)],
         },
         fallbacks=[
             CallbackQueryHandler(admin_cancel_conv, pattern='^admin_cancel$'),
