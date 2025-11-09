@@ -573,6 +573,25 @@ async def admin_kb_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('kb_title', None)
     return ConversationHandler.END
 
+async def admin_cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена любого админ-диалога."""
+    try:
+        if getattr(update, 'callback_query', None):
+            await update.callback_query.answer("Действие отменено")
+            await update.callback_query.message.reply_text(
+                "❌ Действие отменено.", reply_markup=get_main_keyboard(is_admin=True)
+            )
+        elif getattr(update, 'message', None):
+            await update.message.reply_text(
+                "❌ Действие отменено.", reply_markup=get_main_keyboard(is_admin=True)
+            )
+    except Exception:
+        pass
+    for key in ('admin_post', 'admin_event', 'kb_title'):
+        context.user_data.pop(key, None)
+    return ConversationHandler.END
+
+
 
 def get_admin_handler():
     """ConversationHandler для админ-флоу (посты/мероприятия/БЗ)."""
