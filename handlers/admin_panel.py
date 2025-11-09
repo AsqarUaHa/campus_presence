@@ -62,17 +62,20 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     elif data == 'admin_photo_contest':
         await show_photo_contest_menu(query)
-    elif data == 'admin_contest_start':
-        await start_photo_contest(update, context)
     elif data == 'admin_contest_view':
         await view_contest_photos(update, context)
     elif data == 'admin_contest_end':
-        # end_photo_contest ожидает context, оборачиваем вызов
+        # Завершение конкурса вручную
         await end_photo_contest(context)
         try:
             await query.message.reply_text("🏁 Конкурс завершён. Итоги отправлены участникам (если были фото).")
         except Exception:
             pass
+     elif data == 'admin_contest_delete':
+        from handlers.contests import admin_contest_delete
+        await admin_contest_delete(update, context)
+    # admin_contest_start/admin_contest_edit_time обрабатываются ConversationHandler entry_points
+    
     
     elif data == 'admin_panel':
         text = """
@@ -155,14 +158,33 @@ async def show_monitoring(query, context):
 
 async def show_photo_contest_menu(query):
     """Подменю конкурса фото"""
+    # Проверим, есть ли активный конкурс на сегодня
+    end_info = None
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT end_time, is_closed FROM photo_contest_schedule
+            WHERE contest_date = CURRENT_DATE
+        ''')
+        end_info = cursor.fetchone()
     keyboard = [
         [InlineKeyboardButton("🚀 Запустить конкурс", callback_data='admin_contest_start')],
         [InlineKeyboardButton("🖼 Посмотреть фото", callback_data='admin_contest_view')],
         [InlineKeyboardButton("🏁 Завершить конкурс", callback_data='admin_contest_end')],
-        [InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')],
     ]
+    if end_info and not end_info.get('is_closed'):
+        keyboard.insert(1, [InlineKeyboardButton("⏱ Изменить время окончания", callback_data='admin_contest_edit_time')])
+        keyboard.insert(2, [InlineKeyboardButton("🗑 Удалить конкурс", callback_data='admin_contest_delete')])
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')])
+    text = "📸 Конкурс фото — выберите действие:"
+    if end_info and end_info.get('end_time'):
+        from datetime import timezone as dt_tz
+        end_ts = end_info['end_time']
+        if end_ts and end_ts.tzinfo is None:
+            end_ts = end_ts.replace(tzinfo=dt_tz.utc)
+        text += f"\n\nТекущее время окончания приёма: {end_ts.astimezone(TIMEZONE).strftime('%d.%m.%Y %H:%M')}"
     await query.edit_message_text(
-        "📸 Конкурс фото — выберите действие:",
+        text,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -1012,14 +1034,21 @@ async def admin_cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def get_admin_handler():
-    """ConversationHandler для админ-флоу (создание/управление постами, мероприятиями и БЗ)."""
+    """ConversationHandler для админ-флоу (создание/управление постами, мероприятиями, БЗ и конкурсом)."""
     from telegram.ext import CallbackQueryHandler, MessageHandler, filters
+    from handlers.contests import (
+        admin_contest_start_begin,
+        admin_contest_edit_time_begin,
+        admin_contest_set_endtime_input,
+    )
     return ConversationHandler(
         entry_points=[
             # Создание
             CallbackQueryHandler(admin_post_start, pattern='^admin_create_post$'),
             CallbackQueryHandler(admin_event_start, pattern='^admin_create_event$'),
             CallbackQueryHandler(admin_kb_start, pattern='^admin_upload_kb$'),
+            CallbackQueryHandler(admin_contest_start_begin, pattern='^admin_contest_start$'),
+            CallbackQueryHandler(admin_contest_edit_time_begin, pattern='^admin_contest_edit_time$'),
             # Управление
             CallbackQueryHandler(admin_posts_manage_start, pattern='^admin_manage_posts$'),
             CallbackQueryHandler(admin_events_manage_start, pattern='^admin_manage_events$'),
@@ -1065,6 +1094,8 @@ def get_admin_handler():
                 CallbackQueryHandler(admin_kb_manage_cb, pattern='^(kb_rename_|kb_delete_|admin_panel)$')
             ],
             States.ADMIN_KB_RENAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_kb_rename_input)],
+            # Конкурс фото: ввод времени окончания
+            States.ADMIN_CONTEST_ENDTIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_contest_set_endtime_input)],
         },
         fallbacks=[
             CallbackQueryHandler(admin_cancel_conv, pattern='^admin_cancel$'),
