@@ -9,7 +9,7 @@ import logging
 
 from config import TIMEZONE
 from database.db_manager import get_db
-from database.models import get_user_profile, get_all_users_status
+from database.models import get_user_profile, get_all_users_status, is_user_admin
 from utils.keyboards import get_main_keyboard, get_settings_keyboard
 from utils.decorators import registered_only
 from utils.geo_utils import get_status_indicator
@@ -96,7 +96,8 @@ async def show_my_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         text += f"🕐 Обновлено: {local_update.strftime('%H:%M')}\n"
     
-    await update.message.reply_text(text, reply_markup=get_main_keyboard())
+    is_admin = is_user_admin(user_id)
+    await update.message.reply_text(text, reply_markup=get_main_keyboard(is_admin))
 
 
 @registered_only
@@ -131,9 +132,10 @@ async def show_who_inside(update: Update, context: ContextTypes.DEFAULT_TYPE):
         people = cursor.fetchall()
     
     if not people:
+        is_admin = is_user_admin(update.effective_user.id)
         await update.message.reply_text(
             "😔 Сейчас никого нет в кампусе.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(is_admin)
         )
         return
     
@@ -160,7 +162,8 @@ async def show_who_inside(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{status_icon} {name}{team}{status_text}\n"
         text += f"   └ {username} • С {local_time.strftime('%H:%M')}\n\n"
     
-    await update.message.reply_text(text, reply_markup=get_main_keyboard())
+    is_admin = is_user_admin(update.effective_user.id)
+    await update.message.reply_text(text, reply_markup=get_main_keyboard(is_admin))
 
 
 @registered_only
@@ -169,9 +172,10 @@ async def show_all_participants(update: Update, context: ContextTypes.DEFAULT_TY
     users = get_all_users_status()
     
     if not users:
+        is_admin = is_user_admin(update.effective_user.id)
         await update.message.reply_text(
             "📝 Пока нет зарегистрированных участников.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(is_admin)
         )
         return
     
@@ -192,7 +196,8 @@ async def show_all_participants(update: Update, context: ContextTypes.DEFAULT_TY
         text += f"{emoji} {name}\n"
         text += f"   └ {team} • {username}\n\n"
     
-    await update.message.reply_text(text, reply_markup=get_main_keyboard())
+    is_admin = is_user_admin(update.effective_user.id)
+    await update.message.reply_text(text, reply_markup=get_main_keyboard(is_admin))
 
 
 @registered_only
@@ -270,10 +275,11 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
         await query.message.reply_text(f"Геолокация {status}")
     
     elif query.data == 'edit_profile':
+        is_admin = is_user_admin(user_id)
         await query.message.reply_text(
             "✏️ **Редактирование профиля**\n\n"
             "Для изменения данных обратитесь к администратору.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(is_admin)
         )
     
     elif query.data == 'my_stats':
@@ -323,7 +329,8 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
         else:
             stats_text += f"\n🏆 Вы достигли максимального ранга!"
         
-        await query.message.reply_text(stats_text, reply_markup=get_main_keyboard())
+        is_admin = is_user_admin(user_id)
+        await query.message.reply_text(stats_text, reply_markup=get_main_keyboard(is_admin))
     
     elif query.data == 'settings_close':
         await query.message.delete()
@@ -342,9 +349,10 @@ async def show_knowledge_base(update: Update, context: ContextTypes.DEFAULT_TYPE
         files = cursor.fetchall()
     
     if not files:
+        is_admin = is_user_admin(update.effective_user.id)
         await update.message.reply_text(
             "📚 База знаний пока пуста.",
-            reply_markup=get_main_keyboard()
+            reply_markup=get_main_keyboard(is_admin)
         )
         return
     
