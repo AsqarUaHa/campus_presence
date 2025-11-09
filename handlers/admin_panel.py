@@ -50,6 +50,9 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     if data == 'admin_monitoring':
         await show_monitoring(query, context)
+
+    elif data == 'admin_all_users':
+        await show_all_registered_users(query)
     
     elif data == 'admin_events_archive':
         await show_events_archive(query, context)
@@ -374,6 +377,75 @@ async def handle_event_details(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+# ===============================
+# Список всех зарегистрированных пользователей (с координатами)
+# ===============================
+async def show_all_registered_users(query):
+    """Показать всех зарегистрированных пользователей с ключевой информацией и координатами."""
+    from database.db_manager import get_db
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT 
+                u.user_id,
+                u.first_name,
+                u.last_name,
+                u.username,
+                u.team_role,
+                u.phone_number,
+                u.birth_date,
+                u.current_rank,
+                u.total_checkins,
+                u.geo_consent,
+                g.latitude,
+                g.longitude,
+                g.timestamp as geo_ts
+            FROM users u
+            LEFT JOIN (
+                SELECT DISTINCT ON (user_id) user_id, latitude, longitude, timestamp
+                FROM geolocation
+                ORDER BY user_id, timestamp DESC
+            ) g ON u.user_id = g.user_id
+            WHERE u.is_registered = TRUE
+            ORDER BY u.first_name, u.last_name
+        ''')
+        rows = cursor.fetchall()
+    if not rows:
+        await query.edit_message_text(
+            "📝 Зарегистрированных пользователей пока нет.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')]])
+        )
+        return
+    text = f"👤 **Все зарегистрированные ({len(rows)} чел.)**\n\n"
+    from config import TIMEZONE
+    from datetime import timezone as dt_tz
+    # Формируем список (усечём по лимиту Telegram 4096 символов)
+    for row in rows:
+        name = f"{row['first_name']} {row['last_name']}".strip()
+        username = f"@{row['username']}" if row['username'] else ''
+        team = row['team_role'] or 'Не указано'
+        rank = row['current_rank']
+        total = row['total_checkins']
+        phone = row['phone_number'] or '-'
+        text += f"• {name} {username}\n"
+        text += f"  └ {team} • {rank} • {total} отметок\n"
+        text += f"  📱 {phone}\n"
+        if row['geo_consent'] and row['latitude'] is not None and row['longitude'] is not None:
+            ts = row['geo_ts']
+            if ts and ts.tzinfo is None:
+                ts = ts.replace(tzinfo=dt_tz.utc)
+            ts_local = ts.astimezone(TIMEZONE) if ts else None
+            lat = round(float(row['latitude']), 6)
+            lon = round(float(row['longitude']), 6)
+            text += f"  📍 {lat}, {lon}"
+            if ts_local:
+                text += f" • {ts_local.strftime('%d.%m %H:%M')}"
+            text += "\n"
+        else:
+            text += "  📍 —\n"
+        text += "\n"
+    kb = [[InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')]]
+    await query.edit_message_text(text[:4000], reply_markup=InlineKeyboardMarkup(kb))
 
 
 # ===============================
