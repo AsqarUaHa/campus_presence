@@ -7,11 +7,14 @@ from telegram.ext import ContextTypes
 from datetime import datetime, timezone
 import logging
 
-from config import TIMEZONE
+from config import TIMEZONE, States
 from database.db_manager import get_db
 from database.models import get_user_profile
 from utils.keyboards import get_admin_keyboard, get_export_keyboard, get_main_keyboard
 from utils.decorators import admin_only, admin_callback_only
+from features.posts_scheduler import create_post
+from features.knowledge_base import upload_to_kb
+from handlers.contests import start_photo_contest, view_contest_photos, end_photo_contest
 
 logger = logging.getLogger(__name__)
 
@@ -43,17 +46,28 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     """Обработка callback админ-панели"""
     query = update.callback_query
     await query.answer()
+    data = query.data
     
-    if query.data == 'admin_monitoring':
+    if data == 'admin_monitoring':
         await show_monitoring(query, context)
     
-    elif query.data == 'admin_events_archive':
+    elif data == 'admin_events_archive':
         await show_events_archive(query, context)
     
-    elif query.data == 'admin_export_data':
+    elif data == 'admin_export_data':
         await show_export_menu(query, context)
+
+    elif data == 'admin_photo_contest':
+        await show_photo_contest_menu(query)
+    elif data == 'contest_start':
+        await start_photo_contest(update, context)
+    elif data == 'contest_view':
+        await view_contest_photos(update, context)
+    elif data == 'contest_end':
+        # end_photo_contest ожидает context, оборачиваем вызов
+        await end_photo_contest(context)
     
-    elif query.data == 'admin_panel':
+    elif data == 'admin_panel':
         text = """
 🔧 **Административная панель**
 
@@ -64,7 +78,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=get_admin_keyboard()
         )
     
-    elif query.data == 'admin_close':
+    elif data == 'admin_close':
         await query.message.delete()
 
 
@@ -131,7 +145,19 @@ async def show_monitoring(query, context):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-
+async def show_photo_contest_menu(query):
+    """Подменю конкурса фото"""
+    keyboard = [
+        [InlineKeyboardButton("🚀 Запустить конкурс", callback_data='contest_start')],
+        [InlineKeyboardButton("🖼 Посмотреть фото", callback_data='contest_view')],
+        [InlineKeyboardButton("🏁 Завершить конкурс", callback_data='contest_end')],
+        [InlineKeyboardButton("◀️ Назад", callback_data='admin_panel')],
+    ]
+    await query.edit_message_text(
+        "📸 Конкурс фото — выберите действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    
 async def show_events_archive(query, context):
     """Архив мероприятий"""
     with get_db() as conn:
@@ -342,4 +368,228 @@ async def handle_event_details(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text(
         text[:4000],
         reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+
+# ===============================
+# Админ-флоу: Создать пост
+# ===============================
+from telegram.ext import ConversationHandler
+from datetime import datetime
+
+async def admin_post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['admin_post'] = {'media_id': None, 'event_id': None}
+    await query.edit_message_text(
+        "📢 Создание поста\n\nВведите текст поста:")
+    return States.ADMIN_POST_TEXT
+
+async def admin_post_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    if len(text) < 3:
+        await update.message.reply_text("❌ Текст слишком короткий. Введите текст поста:")
+        return States.ADMIN_POST_TEXT
+    context.user_data['admin_post']['text'] = text
+    await update.message.reply_text(
+        "📎 Прикрепите фото к посту (необязательно).\n"
+        "Отправьте фото или напишите 'пропустить'.")
+    return States.ADMIN_POST_MEDIA
+
+async def admin_post_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Фото или пропуск
+    if update.message.photo:
+        media_id = update.message.photo[-1].file_id
+        context.user_data['admin_post']['media_id'] = media_id
+    else:
+        text = (update.message.text or '').strip().lower()
+        if text not in ('пропустить', 'skip', 'нет', 'без фото'):
+            await update.message.reply_text("Отправьте фото или напишите 'пропустить'.")
+            return States.ADMIN_POST_MEDIA
+    await update.message.reply_text(
+        "🕐 Укажите дату и время публикации в формате ДД.ММ.ГГГГ ЧЧ:ММ\n"
+        "Или напишите 'сейчас' для немедленной отправки.")
+    return States.ADMIN_POST_DATETIME
+
+
+def _parse_dt(text: str, tz) -> datetime | None:
+    text = text.strip().lower()
+    from datetime import datetime
+    if text in ('сейчас', 'now', 'немедленно', 'immediately'):
+        return datetime.now(tz)
+    for fmt in ('%d.%m.%Y %H:%M', '%d.%m.%y %H:%M', '%d.%m %H:%M'):
+        try:
+            today_year = datetime.now(tz).year
+            if fmt == '%d.%m %H:%M' and len(text.split()) == 2:
+                dt = datetime.strptime(text, '%d.%m %H:%M')
+                return dt.replace(year=today_year, tzinfo=tz)
+            dt = datetime.strptime(text, fmt)
+            return dt.replace(tzinfo=tz)
+        except Exception:
+            continue
+    return None
+
+async def admin_post_datetime(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import TIMEZONE
+    text = update.message.text
+    dt = _parse_dt(text, TIMEZONE)
+    if not dt:
+        await update.message.reply_text(
+            "❌ Неверный формат. Введите ДД.ММ.ГГГГ ЧЧ:ММ или 'сейчас':")
+        return States.ADMIN_POST_DATETIME
+    data = context.user_data['admin_post']
+    post_id = await create_post(
+        user_id=update.effective_user.id,
+        text=data['text'],
+        media_id=data['media_id'],
+        scheduled_time=dt,
+        event_id=data.get('event_id')
+    )
+    await update.message.reply_text(
+        f"✅ Пост создан (ID: {post_id}).\n"
+        f"🕐 Запланировано на: {dt.strftime('%d.%m.%Y %H:%M')}",
+        reply_markup=get_main_keyboard(is_admin=True)
+    )
+    context.user_data.pop('admin_post', None)
+    return ConversationHandler.END
+
+
+# ===============================
+# Админ-флоу: Создать мероприятие
+# ===============================
+async def admin_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['admin_event'] = {}
+    await query.edit_message_text("🎯 Создание мероприятия\n\nВведите название:")
+    return States.ADMIN_EVENT_NAME
+
+async def admin_event_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    if len(name) < 3:
+        await update.message.reply_text("❌ Название слишком короткое. Введите снова:")
+        return States.ADMIN_EVENT_NAME
+    context.user_data['admin_event']['name'] = name
+    await update.message.reply_text("🕐 Введите дату и время начала (ДД.ММ.ГГГГ ЧЧ:ММ):")
+    return States.ADMIN_EVENT_START
+
+async def admin_event_start_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import TIMEZONE
+    dt = _parse_dt(update.message.text, TIMEZONE)
+    if not dt:
+        await update.message.reply_text("❌ Формат неверен. ДД.ММ.ГГГГ ЧЧ:ММ:")
+        return States.ADMIN_EVENT_START
+    context.user_data['admin_event']['start'] = dt
+    await update.message.reply_text("🕐 Введите дату и время окончания (ДД.ММ.ГГГГ ЧЧ:ММ):")
+    return States.ADMIN_EVENT_END
+
+async def admin_event_end_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from config import TIMEZONE
+    dt = _parse_dt(update.message.text, TIMEZONE)
+    if not dt:
+        await update.message.reply_text("❌ Формат неверен. ДД.ММ.ГГГГ ЧЧ:ММ:")
+        return States.ADMIN_EVENT_END
+    context.user_data['admin_event']['end'] = dt
+    await update.message.reply_text("📝 Введите описание (или 'пропустить'):")
+    return States.ADMIN_EVENT_DESC
+
+async def admin_event_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    desc = update.message.text.strip()
+    if desc.lower() in ('пропустить', 'skip', 'нет'):
+        desc = None
+    data = context.user_data['admin_event']
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO events (name, start_time, end_time, description, created_by)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+        ''', (data['name'], data['start'], data['end'], desc, update.effective_user.id))
+        event_id = cursor.fetchone()['id']
+        conn.commit()
+    await update.message.reply_text(
+        f"✅ Мероприятие создано (ID: {event_id})\n"
+        f"📅 {data['name']} | {data['start'].strftime('%d.%m %H:%M')} — {data['end'].strftime('%d.%m %H:%M')}",
+        reply_markup=get_main_keyboard(is_admin=True)
+    )
+    context.user_data.pop('admin_event', None)
+    return ConversationHandler.END
+
+
+# ===============================
+# Админ-флоу: Загрузка в Базу знаний
+# ===============================
+async def admin_kb_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("📚 Загрузка в Базу знаний\n\nВведите заголовок материала:")
+    return States.ADMIN_KB_TITLE
+
+async def admin_kb_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    title = update.message.text.strip()
+    if len(title) < 3:
+        await update.message.reply_text("❌ Слишком коротко. Введите заголовок:")
+        return States.ADMIN_KB_TITLE
+    context.user_data['kb_title'] = title
+    await update.message.reply_text("📎 Отправьте файл (документ или фото):")
+    return States.ADMIN_KB_FILE
+
+async def admin_kb_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file_id = None
+    file_type = None
+    if update.message.document:
+        file_id = update.message.document.file_id
+        file_type = 'document'
+    elif update.message.photo:
+        file_id = update.message.photo[-1].file_id
+        file_type = 'photo'
+    else:
+        await update.message.reply_text("❌ Отправьте документ или фото:")
+        return States.ADMIN_KB_FILE
+    kb_id = await upload_to_kb(
+        user_id=update.effective_user.id,
+        title=context.user_data.get('kb_title', 'Без названия'),
+        file_id=file_id,
+        file_type=file_type
+    )
+    await update.message.reply_text(
+        f"✅ Материал добавлен в Базу знаний (ID: {kb_id})",
+        reply_markup=get_main_keyboard(is_admin=True)
+    )
+    context.user_data.pop('kb_title', None)
+    return ConversationHandler.END
+
+
+def get_admin_handler():
+    """ConversationHandler для админ-флоу (посты/мероприятия/БЗ)."""
+    from telegram.ext import CallbackQueryHandler, MessageHandler, filters
+    return ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(admin_post_start, pattern='^admin_create_post$'),
+            CallbackQueryHandler(admin_event_start, pattern='^admin_create_event$'),
+            CallbackQueryHandler(admin_kb_start, pattern='^admin_upload_kb$'),
+        ],
+        states={
+            States.ADMIN_POST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_text)],
+            States.ADMIN_POST_MEDIA: [
+                MessageHandler(filters.PHOTO, admin_post_media),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_media)
+            ],
+            States.ADMIN_POST_DATETIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_datetime)],
+
+            States.ADMIN_EVENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_name)],
+            States.ADMIN_EVENT_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_start_time)],
+            States.ADMIN_EVENT_END: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_end_time)],
+            States.ADMIN_EVENT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_desc)],
+
+            States.ADMIN_KB_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_kb_title)],
+            States.ADMIN_KB_FILE: [
+                MessageHandler(filters.Document.ALL, admin_kb_file),
+                MessageHandler(filters.PHOTO, admin_kb_file)
+            ],
+        },
+        fallbacks=[],
+        name="admin_flows",
+        persistent=False
     )
