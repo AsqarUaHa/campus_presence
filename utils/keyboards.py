@@ -28,8 +28,11 @@ def get_admin_keyboard():
         [InlineKeyboardButton("👤 Все зарегистрированные", callback_data='admin_all_users')],
         [InlineKeyboardButton("📋 Архив мероприятий", callback_data='admin_events_archive')],
         [InlineKeyboardButton("📢 Создать пост", callback_data='admin_create_post')],
+        [InlineKeyboardButton("🗂 Управление постами", callback_data='admin_manage_posts')],
         [InlineKeyboardButton("🎯 Создать мероприятие", callback_data='admin_create_event')],
+        [InlineKeyboardButton("🗓 Управление мероприятиями", callback_data='admin_manage_events')],
         [InlineKeyboardButton("📚 Загрузить в Базу Знаний", callback_data='admin_upload_kb')],
+        [InlineKeyboardButton("🗃 Управление Базой знаний", callback_data='admin_manage_kb')],
         [InlineKeyboardButton("📊 Экспорт данных", callback_data='admin_export_data')],
         [InlineKeyboardButton("📸 Конкурс фото", callback_data='admin_photo_contest')],
         [InlineKeyboardButton("◀️ Назад", callback_data='admin_close')]
