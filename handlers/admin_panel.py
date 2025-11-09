@@ -63,7 +63,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await start_photo_contest(update, context)
     elif data == 'admin_contest_view':
         await view_contest_photos(update, context)
-    elif data == 'admin_contest_end'
+    elif data == 'admin_contest_end':
         # end_photo_contest ожидает context, оборачиваем вызов
         await end_photo_contest(context)
         try:
