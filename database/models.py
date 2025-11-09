@@ -163,7 +163,20 @@ def init_database():
                 UNIQUE(photo_id, voter_id)
             )
         ''')
-        
+
+        # Расписание фотоконкурса (по датам)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS photo_contest_schedule (
+                contest_date DATE PRIMARY KEY,
+                end_time TIMESTAMP,
+                is_closed BOOLEAN DEFAULT FALSE
+            )
+        ''')
+        cursor.execute('''
+            ALTER TABLE photo_contest_schedule
+            ADD COLUMN IF NOT EXISTS end_time TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS is_closed BOOLEAN DEFAULT FALSE
+        ''')
         # Таблица базы знаний (новая)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS knowledge_base (
