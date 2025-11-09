@@ -3,7 +3,7 @@
 # ============================================
 
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 from datetime import datetime, time
 import logging
 
@@ -60,7 +60,7 @@ async def start_photo_contest(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 Условия:
 • Одно фото от участника
-• Приём до 02:00
+• Приём до указанного времени
 • Голосование среди всех участников
 • Победитель получит признание! 🏆
 
