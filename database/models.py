@@ -77,7 +77,18 @@ def init_database():
                 longitude REAL
             )
         ''')
-        
+
+        # Обновление схемы presence: гарантируем наличие нужных столбцов
+        cursor.execute('''
+            ALTER TABLE presence
+            ADD COLUMN IF NOT EXISTS event_id INTEGER REFERENCES events(id),
+            ADD COLUMN IF NOT EXISTS check_in_time TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS check_out_time TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS date DATE,
+            ADD COLUMN IF NOT EXISTS status TEXT,
+            ADD COLUMN IF NOT EXISTS latitude REAL,
+            ADD COLUMN IF NOT EXISTS longitude REAL
+        ''')
         # Таблица геолокации
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS geolocation (
@@ -89,6 +100,16 @@ def init_database():
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 is_near_campus BOOLEAN
             )
+        ''')
+
+        # Обновление схемы geolocation: гарантируем наличие нужных столбцов
+        cursor.execute('''
+            ALTER TABLE geolocation
+            ADD COLUMN IF NOT EXISTS latitude REAL,
+            ADD COLUMN IF NOT EXISTS longitude REAL,
+            ADD COLUMN IF NOT EXISTS distance_to_campus REAL,
+            ADD COLUMN IF NOT EXISTS timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS is_near_campus BOOLEAN
         ''')
         
         # Таблица постов (новая)
