@@ -48,16 +48,29 @@ class States:
     ADMIN_POST_TEXT = 10
     ADMIN_POST_MEDIA = 11
     ADMIN_POST_DATETIME = 12
+    # Админка - управление постами
+    ADMIN_POST_MANAGE = 13
+    ADMIN_POST_EDIT_TEXT = 14
+    ADMIN_POST_EDIT_TIME = 15
     
     # Админка - создание мероприятия
     ADMIN_EVENT_NAME = 20
     ADMIN_EVENT_START = 21
     ADMIN_EVENT_END = 22
     ADMIN_EVENT_DESC = 23
+    # Админка - управление мероприятиями
+    ADMIN_EVENT_MANAGE = 24
+    ADMIN_EVENT_EDIT_NAME = 25
+    ADMIN_EVENT_EDIT_START = 26
+    ADMIN_EVENT_EDIT_END = 27
+    ADMIN_EVENT_EDIT_DESC = 28
     
     # База знаний - загрузка
     ADMIN_KB_TITLE = 30
     ADMIN_KB_FILE = 31
+    # База знаний - управление
+    ADMIN_KB_MANAGE = 32
+    ADMIN_KB_RENAME = 33
     
     # Конкурс фото
     CONTEST_PHOTO_UPLOAD = 40
