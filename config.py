@@ -74,6 +74,8 @@ class States:
     
     # Конкурс фото
     CONTEST_PHOTO_UPLOAD = 40
+    # Админка — время окончания фотоконкурса (ввод)
+    ADMIN_CONTEST_ENDTIME = 41
     
     # Редактирование профиля
     EDIT_PROFILE_FIELD = 50
