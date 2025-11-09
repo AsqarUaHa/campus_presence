@@ -331,10 +331,23 @@ async def handle_callbacks(update: Update, context):
     else:
         await query.answer()
 
+# ============================================
+# ГЛОБАЛЬНЫЕ ОБРАБОТЧИКИ ОШИБОК
+# ============================================
+
+async def global_error_handler(update: Update, context):
+    logger.error("Unhandled error in handler", exc_info=context.error)
+    try:
+        if update and getattr(update, 'effective_chat', None):
+            # Мягкое уведомление админу/пользователю (без падения приложения)
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Произошла ошибка. Мы уже разбираемся.")
+    except Exception:
+        pass
 
 # ============================================
 # ГЛАВНАЯ ФУНКЦИЯ
 # ============================================
+
 
 def main():
     """Запуск бота"""
@@ -394,9 +407,15 @@ def main():
     flask_thread.start()
     logger.info("✅ Flask запущен для Render")
     
-    # Telegram Application
-    application = Application.builder().token(BOT_TOKEN).build()
+     # Telegram Application (with job queue enabled)
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
     
+    # Глобальный обработчик ошибок, чтобы исключения в handlers/jobs не валили приложение
+    application.add_error_handler(global_error_handler)
     # Job queue для автопостов
     job_queue = application.job_queue
     
@@ -459,9 +478,19 @@ def main():
     logger.info("🚀 Бот запущен и готов к работе!")
     logger.info("=" * 60)
     
-    # Запускаем бота
+    # Запускаем бота (устойчивый цикл перезапуска при непредвиденных ошибках)
+    import time
     try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        while True:
+            try:
+                application.run_polling(allowed_updates=Update.ALL_TYPES)
+            except Exception as e:
+                logger.error(f"run_polling упал: {e}. Перезапуск через 5с")
+                time.sleep(5)
+                continue
+            # Если вышли без исключения — это, скорее всего, внешняя остановка. Дадим шанс авто‑рестарту.
+            logger.warning("run_polling завершился. Перезапуск через 5с")
+            time.sleep(5)
     except KeyboardInterrupt:
         logger.info("⏹ Остановка бота...")
     finally:
