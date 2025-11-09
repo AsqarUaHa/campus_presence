@@ -340,6 +340,11 @@ async def handle_callbacks(update: Update, context):
         elif data.startswith('export_event_'):
             event_id = int(data.replace('export_event_', ''))
             await export_presence_data(update, context, 'event', event_id)
+
+    # Конкурс фото (пользовательские действия)
+    elif data.startswith('contest_'):
+        from handlers.contests import handle_contest_callback
+        await handle_contest_callback(update, context)
     
     else:
         await query.answer()
