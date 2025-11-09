@@ -25,6 +25,7 @@ def get_admin_keyboard():
     """Клавиатура админ-панели"""
     keyboard = [
         [InlineKeyboardButton("👥 Мониторинг присутствия", callback_data='admin_monitoring')],
+        [InlineKeyboardButton("👤 Все зарегистрированные", callback_data='admin_all_users')],
         [InlineKeyboardButton("📋 Архив мероприятий", callback_data='admin_events_archive')],
         [InlineKeyboardButton("📢 Создать пост", callback_data='admin_create_post')],
         [InlineKeyboardButton("🎯 Создать мероприятие", callback_data='admin_create_event')],
