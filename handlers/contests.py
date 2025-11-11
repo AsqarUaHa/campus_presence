@@ -253,20 +253,13 @@ async def admin_contest_delete(update: Update, context: ContextTypes.DEFAULT_TYP
         pass
     await query.message.reply_text("🗑 Конкурс на сегодня удалён.")
 
-        # Если пользователь прислал фото без нажатия кнопок
-        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Участвовать", callback_data='contest_join')]])
-        await update.message.reply_text(
-            "ℹ️ Чтобы участвовать в конкурсе, нажмите «Участвовать», затем отправьте фото.",
-            reply_markup=kb
-        )
 
 @admin_callback_only
 async def view_contest_photos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Просмотр фото конкурса"""
     query = update.callback_query
     await query.answer()
-    
+
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
@@ -282,20 +275,21 @@ async def view_contest_photos(update: Update, context: ContextTypes.DEFAULT_TYPE
             ORDER BY pc.votes DESC
         ''')
         photos = cursor.fetchall()
-    
+
     if not photos:
         await query.message.reply_text("📸 Пока нет фото на конкурсе.")
         return
-    
+
     await query.message.reply_text(
         f"📸 Всего фото на конкурсе: {len(photos)}\n\n"
         "Сейчас отправлю все фото..."
     )
-    
+
     for photo in photos:
-        caption = f"{photo['first_name']} {photo['last_name']}\n" \
-                  f"🗳 Голосов: {photo['votes']}"
-        
+        caption = (
+            f"{photo['first_name']} {photo['last_name']}\n"
+            f"🗳 Голосов: {photo['votes']}"
+        )
         await query.message.reply_photo(
             photo=photo['photo_file_id'],
             caption=caption
