@@ -50,22 +50,16 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     if data == 'admin_monitoring':
         await show_monitoring(query, context)
-    
     elif data == 'admin_all_users':
         await show_all_registered_users(query)
-    
     elif data == 'admin_events_archive':
         await show_events_archive(query, context)
-    
     elif data == 'admin_export_data':
         await show_export_menu(query, context)
-    
     elif data == 'admin_photo_contest':
         await show_photo_contest_menu(query)
-        
     elif data == 'admin_contest_view':
         await view_contest_photos(update, context)
-        
     elif data == 'admin_contest_end':
         # Завершение конкурса вручную
         await end_photo_contest(context)
@@ -77,7 +71,6 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
      elif data == 'admin_contest_delete':
         from handlers.contests import admin_contest_delete
         await admin_contest_delete(update, context)
-    
     elif data == 'admin_panel':
         text = """
 🔧 **Административная панель**
@@ -88,9 +81,6 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
             text,
             reply_markup=get_admin_keyboard()
         )
-    
-    elif data == 'admin_close':
-        await query.message.delete()
     elif data == 'admin_close':
         await query.message.delete()
 
