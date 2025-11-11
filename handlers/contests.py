@@ -10,7 +10,7 @@ import logging
 from config import States, TIMEZONE, CONTEST_END_TIME
 from database.db_manager import get_db
 from utils.keyboards import get_main_keyboard
-from utils.decorators import registered_only, admin_callback_only
+from utils.decorators import registered_only, admin_callback_only, admin_only
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def _parse_dt_local(text: str):
             continue
     return None
 
-@admin_callback_only
+@admin_only
 async def start_photo_contest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Рассылка приглашения на конкурс фото всем пользователям с указанием дедлайна."""
     query = getattr(update, 'callback_query', None)
