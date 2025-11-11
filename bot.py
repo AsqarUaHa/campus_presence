@@ -313,7 +313,7 @@ async def handle_callbacks(update: Update, context):
     data = query.data
     
     # Настройки
-    if data in ['toggle_geo', 'edit_profile', 'my_stats', 'settings_close', 'delete_account', 'delete_account_confirm', 'delete_account_cancel']:
+    if data in ['toggle_geo', 'edit_profile', 'my_stats', 'delete_account']:
         await handle_settings_callback(update, context)
     
     # База знаний
