@@ -563,7 +563,11 @@ async def admin_event_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data['admin_event'] = {}
-    await query.edit_message_text("🎯 Создание мероприятия\n\nВведите название:")
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data='admin_cancel')]])
+    await query.edit_message_text(
+        "🎯 Создание мероприятия\n\nВведите название:",
+        reply_markup=cancel_kb
+    )
     return States.ADMIN_EVENT_NAME
 
 async def admin_event_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
