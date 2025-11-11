@@ -2,7 +2,7 @@
 # FILE: handlers/contests.py
 # ============================================
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
 from datetime import datetime, time
 import logging
