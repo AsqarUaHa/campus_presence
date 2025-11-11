@@ -47,7 +47,7 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     data = query.data
-    
+
     if data == 'admin_monitoring':
         await show_monitoring(query, context)
     elif data == 'admin_all_users':
@@ -60,17 +60,17 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await show_photo_contest_menu(query)
     elif data == 'admin_contest_view':
         await view_contest_photos(update, context)
-    elif data == 'admin_contest_end':
-        # Завершение конкурса вручную
-        await end_photo_contest(context)
-        try:
-            await query.message.reply_text("🏁 Конкурс завершён. Итоги отправлены участникам (если были фото).")
-        except Exception:
-            pass
-            
-     elif data == 'admin_contest_delete':
-        from handlers.contests import admin_contest_delete
-        await admin_contest_delete(update, context)
+    elif data in ('admin_contest_end', 'admin_contest_delete'):
+        if data == 'admin_contest_end':
+            # Завершение конкурса вручную
+            await end_photo_contest(context)
+            try:
+                await query.message.reply_text("🏁 Конкурс завершён. Итоги отправлены участникам (если были фото).")
+            except Exception:
+                pass
+        else:
+            from handlers.contests import admin_contest_delete
+            await admin_contest_delete(update, context)
     elif data == 'admin_panel':
         text = """
 🔧 **Административная панель**
