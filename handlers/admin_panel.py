@@ -62,12 +62,15 @@ async def handle_admin_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await view_contest_photos(update, context)
     elif data in ('admin_contest_end', 'admin_contest_delete'):
         if data == 'admin_contest_end':
-            # Завершение конкурса вручную
-            await end_photo_contest(context)
+            # Завершение конкурса вручную (с безопасной обработкой)
             try:
+                await end_photo_contest(context)
                 await query.message.reply_text("🏁 Конкурс завершён. Итоги отправлены участникам (если были фото).")
-            except Exception:
-                pass
+            except Exception as e:
+                try:
+                    await query.message.reply_text(f"❌ Ошибка завершения конкурса: {e}")
+                except Exception:
+                    pass
         else:
             from handlers.contests import admin_contest_delete
             await admin_contest_delete(update, context)
@@ -747,7 +750,12 @@ async def admin_post_edit_time_input(update: Update, context: ContextTypes.DEFAU
 async def admin_kb_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📚 Загрузка в Базу знаний\n\nВведите заголовок материала:")
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data='admin_cancel')]])
+    await query.edit_message_text(
+        "📚 Загрузка в Базу знаний\n\nВведите заголовок материала:",
+        reply_markup=cancel_kb
+    )
+
     return States.ADMIN_KB_TITLE
 
 async def admin_kb_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -756,7 +764,11 @@ async def admin_kb_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Слишком коротко. Введите заголовок:")
         return States.ADMIN_KB_TITLE
     context.user_data['kb_title'] = title
-    await update.message.reply_text("📎 Отправьте файл (документ или фото):")
+    cancel_kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data='admin_cancel')]])
+    await update.message.reply_text(
+        "📎 Отправьте файл (документ или фото):",
+        reply_markup=cancel_kb
+    )
     return States.ADMIN_KB_FILE
 
 async def admin_kb_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1060,7 +1072,7 @@ def get_admin_handler():
             States.ADMIN_POST_DATETIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_datetime)],
             # Посты: управление
             States.ADMIN_POST_MANAGE: [
-                CallbackQueryHandler(admin_posts_manage_cb, pattern='^(post_edit_text_\d+|post_edit_time_\d+|post_delete_\d+|admin_panel)$')
+                CallbackQueryHandler(admin_posts_manage_cb, pattern=r'^(post_edit_text_\d+|post_edit_time_\d+|post_delete_\d+|admin_panel)$')
             ],
             States.ADMIN_POST_EDIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_edit_text_input)],
             States.ADMIN_POST_EDIT_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_edit_time_input)],
@@ -1072,7 +1084,7 @@ def get_admin_handler():
             States.ADMIN_EVENT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_desc)],
             # События: управление
             States.ADMIN_EVENT_MANAGE: [
-                CallbackQueryHandler(admin_events_manage_cb, pattern='^(event_edit_name_\d+|event_edit_desc_\d+|event_edit_start_\d+|event_edit_end_\d+|event_delete_\d+|admin_panel)$')
+                CallbackQueryHandler(admin_events_manage_cb, pattern=r'^(event_edit_name_\d+|event_edit_desc_\d+|event_edit_start_\d+|event_edit_end_\d+|event_delete_\d+|admin_panel)$')
             ],
             States.ADMIN_EVENT_EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_edit_name_input)],
             States.ADMIN_EVENT_EDIT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_edit_desc_input)],
@@ -1087,7 +1099,7 @@ def get_admin_handler():
             ],
             # База знаний: управление
             States.ADMIN_KB_MANAGE: [
-                CallbackQueryHandler(admin_kb_manage_cb, pattern='^(kb_rename_\d+|kb_delete_\d+|admin_panel)$')
+                CallbackQueryHandler(admin_kb_manage_cb, pattern=r'^(kb_rename_\d+|kb_delete_\d+|admin_panel)$')
             ],
             States.ADMIN_KB_RENAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_kb_rename_input)],
             # Конкурс фото: ввод времени окончания
