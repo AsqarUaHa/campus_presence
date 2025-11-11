@@ -49,7 +49,7 @@ def get_settings_keyboard(geo_consent=False):
         )],
         [InlineKeyboardButton("✏️ Редактировать профиль", callback_data='edit_profile')],
         [InlineKeyboardButton("📊 Моя статистика", callback_data='my_stats')],
-        [InlineKeyboardButton("◀️ Назад", callback_data='settings_close')]
+        [InlineKeyboardButton("🗑 Удалить аккаунт", callback_data='delete_account')]
     ]
     return InlineKeyboardMarkup(keyboard)
 
