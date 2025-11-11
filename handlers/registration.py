@@ -9,7 +9,7 @@ import re
 import logging
 
 from config import States
-from database.models import is_user_registered, is_user_admin, complete_registration
+from database.models import is_user_registered, is_user_admin, complete_registration, create_user
 from utils.keyboards import get_main_keyboard
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,14 @@ logger = logging.getLogger(__name__)
 
 async def start_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начало процесса регистрации"""
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+
+    # Гарантируем наличие строки пользователя до UPDATE в конце
+    try:
+        create_user(user_id, user.username or "Без username", user.full_name)
+    except Exception:
+        pass
 
     # Если уже зарегистрирован — не даём регистрироваться повторно
     if is_user_registered(user_id):
