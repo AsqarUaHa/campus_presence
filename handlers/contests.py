@@ -43,9 +43,26 @@ def _parse_dt_local(text: str):
 
 @admin_callback_only
 async def start_photo_contest(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запуск конкурса фото"""
-    query = update.callback_query
-    await query.answer()
+    """Рассылка приглашения на конкурс фото всем пользователям с указанием дедлайна."""
+    query = getattr(update, 'callback_query', None)
+    if query:
+        try:
+            await query.answer()
+        except Exception:
+            pass
+    
+    # Получаем дедлайн конкурса на сегодня (если задан)
+    end_text = ""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT end_time FROM photo_contest_schedule WHERE contest_date = CURRENT_DATE')
+        row = cursor.fetchone()
+    if row and row.get('end_time'):
+        from datetime import timezone as dt_tz
+        end_ts = row['end_time']
+        if end_ts and end_ts.tzinfo is None:
+            end_ts = end_ts.replace(tzinfo=dt_tz.utc)
+        end_text = f"\n\n⏱ Приём фото до: {end_ts.astimezone(TIMEZONE).strftime('%d.%m.%Y %H:%M')}"
     
     # Объявляем конкурс всем пользователям
     with get_db() as conn:
@@ -53,19 +70,16 @@ async def start_photo_contest(update: Update, context: ContextTypes.DEFAULT_TYPE
         cursor.execute('SELECT user_id FROM users WHERE is_registered = TRUE')
         users = cursor.fetchall()
     
-    contest_text = """
-📸 **Конкурс "Лучшее фото"**
-
-🎯 Участвуйте: пришлите одно фото дня с описанием (подписью).
-
-Условия:
-• Одно фото от участника
-• Приём до указанного времени
-• Голосование среди всех участников
-• Победитель получит признание! 🏆
-
-Нажмите «Участвовать», чтобы отправить фото.
-    """
+    contest_text = (
+        "📸 **Конкурс \"Лучшее фото\"**\n\n"
+        "🎯 Участвуйте: пришлите одно фото дня с описанием (подписью).\n\n"
+        "Условия:\n"
+        "• Одно фото от участника\n"
+        "• Голосование среди всех участников\n"
+        "• Победитель получит признание! 🏆\n"
+        + end_text + "\n\n"
+        "Нажмите «Участвовать», чтобы отправить фото."
+    )
     
     bot = context.bot
     sent_count = 0
@@ -87,11 +101,18 @@ async def start_photo_contest(update: Update, context: ContextTypes.DEFAULT_TYPE
         except Exception as e:
             logger.error(f"Ошибка отправки уведомления о конкурсе: {e}")
     
-    await query.message.reply_text(
-        f"✅ Конкурс запущен!\n"
-        f"📢 Уведомлено участников: {sent_count}"
-    )
-
+    # Сообщение админу о результате
+    try:
+        if query and getattr(query, 'message', None):
+            await query.message.reply_text(
+                f"✅ Конкурс запущен!\n📢 Уведомлено участников: {sent_count}"
+            )
+        elif getattr(update, 'message', None):
+            await update.message.reply_text(
+                f"✅ Конкурс запущен!\n📢 Уведомлено участников: {sent_count}"
+            )
+    except Exception:
+        pass
 
 @registered_only
 async def upload_contest_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
