@@ -1060,7 +1060,7 @@ def get_admin_handler():
             States.ADMIN_POST_DATETIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_datetime)],
             # Посты: управление
             States.ADMIN_POST_MANAGE: [
-                CallbackQueryHandler(admin_posts_manage_cb, pattern='^(post_edit_text_|post_edit_time_|post_delete_|admin_panel)$')
+                CallbackQueryHandler(admin_posts_manage_cb, pattern='^(post_edit_text_\d+|post_edit_time_\d+|post_delete_\d+|admin_panel)$')
             ],
             States.ADMIN_POST_EDIT_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_edit_text_input)],
             States.ADMIN_POST_EDIT_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_post_edit_time_input)],
@@ -1072,7 +1072,7 @@ def get_admin_handler():
             States.ADMIN_EVENT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_desc)],
             # События: управление
             States.ADMIN_EVENT_MANAGE: [
-                CallbackQueryHandler(admin_events_manage_cb, pattern='^(event_edit_name_|event_edit_desc_|event_edit_start_|event_edit_end_|event_delete_|admin_panel)$')
+                CallbackQueryHandler(admin_events_manage_cb, pattern='^(event_edit_name_\d+|event_edit_desc_\d+|event_edit_start_\d+|event_edit_end_\d+|event_delete_\d+|admin_panel)$')
             ],
             States.ADMIN_EVENT_EDIT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_edit_name_input)],
             States.ADMIN_EVENT_EDIT_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_event_edit_desc_input)],
@@ -1087,7 +1087,7 @@ def get_admin_handler():
             ],
             # База знаний: управление
             States.ADMIN_KB_MANAGE: [
-                CallbackQueryHandler(admin_kb_manage_cb, pattern='^(kb_rename_|kb_delete_|admin_panel)$')
+                CallbackQueryHandler(admin_kb_manage_cb, pattern='^(kb_rename_\d+|kb_delete_\d+|admin_panel)$')
             ],
             States.ADMIN_KB_RENAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, admin_kb_rename_input)],
             # Конкурс фото: ввод времени окончания
