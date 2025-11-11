@@ -332,7 +332,25 @@ async def handle_settings_callback(update: Update, context: ContextTypes.DEFAULT
         is_admin = is_user_admin(user_id)
         await query.message.reply_text(stats_text, reply_markup=get_main_keyboard(is_admin))
     
-    elif query.data == 'settings_close':
+    elif query.data == 'delete_account':
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE users
+                SET is_registered = FALSE,
+                    geo_consent = FALSE,
+                    first_name = NULL,
+                    last_name = NULL,
+                    birth_date = NULL,
+                    team_role = NULL,
+                    phone_number = NULL,
+                    last_update = CURRENT_TIMESTAMP
+                WHERE user_id = %s
+            ''', (user_id,))
+            conn.commit()
+        await query.message.reply_text(
+            "🗑 Аккаунт удалён. Чтобы зарегистрироваться снова — отправьте /start."
+        )
         await query.message.delete()
 
 
